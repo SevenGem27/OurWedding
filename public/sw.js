@@ -1,10 +1,10 @@
 /* Service worker: l'app funziona anche senza connessione.
    Quando pubblicate una nuova versione dei file, cambiate VERSION. */
-const VERSION = 'v1.0.0';
+const VERSION = 'v1.1.0';
 const CACHE = `spese-nozze-${VERSION}`;
+const PAGE = './';
 const ASSETS = [
-  './',
-  './index.html',
+  PAGE,
   './styles.css',
   './app.js',
   './manifest.webmanifest',
@@ -14,12 +14,28 @@ const ASSETS = [
   './icons/icon-512.png',
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon.png',
-  './icons/favicon.svg',
-  './icons/favicon-32.png'
+  './icons/favicon-32.png',
+  './icons/favicon-64.png'
 ];
 
+// Alcuni hosting (Cloudflare) reindirizzano /index.html a /: una risposta
+// "reindirizzata" non può servire una navigazione, quindi se ne salva una copia pulita.
+async function cleanResponse(res) {
+  if (!res.redirected) return res;
+  const body = await res.blob();
+  return new Response(body, { status: res.status, statusText: res.statusText, headers: res.headers });
+}
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE);
+    await Promise.all(ASSETS.map(async (url) => {
+      const res = await fetch(url, { cache: 'reload' });
+      if (!res.ok) throw new Error(`${url}: ${res.status}`);
+      await cache.put(url, await cleanResponse(res));
+    }));
+    await self.skipWaiting();
+  })());
 });
 
 self.addEventListener('activate', (event) => {
@@ -36,19 +52,21 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return; // la sincronizzazione non passa dalla cache
 
   const isPage = req.mode === 'navigate';
-  const key = isPage ? './index.html' : req;
+  const key = isPage ? PAGE : req;
 
   event.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const cached = await cache.match(key, { ignoreSearch: isPage });
-    const network = fetch(req).then((res) => {
-      if (res && res.ok && res.type === 'basic') cache.put(key, res.clone());
+    const network = fetch(isPage ? PAGE : req).then(async (res) => {
+      if (res && res.ok && res.type === 'basic') await cache.put(key, await cleanResponse(res.clone()));
       return res;
     }).catch(() => null);
     if (cached) { event.waitUntil(network); return cached; }
     const res = await network;
-    return res || new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+    if (res) return isPage ? cleanResponse(res) : res;
+    return new Response('Offline', { status: 503, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   })());
 });

@@ -1,14 +1,16 @@
 /* Spese del matrimonio — PWA
-   Tutti i dati restano sul dispositivo (localStorage).
-   La sincronizzazione tra i due telefoni avviene con un codice o un file
-   che si unisce voce per voce: vince la modifica più recente. */
+   I dati vivono sul telefono (localStorage) e, se i due telefoni sono
+   collegati con un codice di coppia, si sincronizzano in tempo reale
+   tramite il server Cloudflare (cartella worker/). Il server riceve solo
+   dati cifrati con una chiave ricavata dal codice. Per ogni spesa vince
+   la modifica più recente. */
 'use strict';
 
 (() => {
   const KEY = 'spese-nozze:v1';
+  const SYNC_KEY = 'spese-nozze:sync';
   const APP_ID = 'spese-nozze';
-  const VERSION = '1.0.0';
-  const CODE_PREFIX = 'NOZZE1';
+  const VERSION = '1.1.0';
 
   const DEFAULT_CATEGORIES = [
     'Location e ricevimento', 'Catering', 'Chiesa o Comune', 'Abito sposa', 'Abito sposo',
@@ -64,6 +66,7 @@
       v: 1,
       settings: { name1: '', name2: '', date: '', budget: 0, extraPayers: ['Insieme', 'Famiglie'], updatedAt: 0 },
       categories: [...DEFAULT_CATEGORIES],
+      catU: 0,
       items: [],
       meta: { onboarded: false, lastBackup: 0, lastSync: 0 }
     };
@@ -93,6 +96,7 @@
       v: 1,
       settings,
       categories: Array.isArray(s.categories) && s.categories.length ? s.categories.map(String) : b.categories,
+      catU: Math.max(0, toInt(s.catU)),
       items: Array.isArray(s.items) ? s.items.map(normItem) : [],
       meta: { ...b.meta, ...(s.meta || {}) }
     };
@@ -111,7 +115,9 @@
       if (!saveFailed) toast('Salvataggio non riuscito: il browser non concede spazio. Esporta un backup dalle impostazioni.');
       saveFailed = true;
     }
+    if (typeof scheduleFlush === 'function') scheduleFlush();
   }
+  const touchCategories = () => { state.catU = Math.max(now(), (state.catU || 0) + 1); };
 
   let state = load();
   const ui = { tab: 'home', filter: 'all', q: '', cat: '' };
@@ -234,7 +240,7 @@
     const names = [s.name1, s.name2].map((x) => x.trim()).filter(Boolean);
     const t = totals();
     const cd = countdown();
-    let h = `<header><h1 class="couple">${names.length ? esc(names.join(' e ')) : 'Il nostro matrimonio'}</h1>${cd ? `<p class="countdown">${esc(cd)}</p>` : ''}</header>`;
+    let h = `<header><h1 class="couple">${names.length ? esc(names.join(' e ')) : 'Il nostro matrimonio'}</h1>${cd ? `<p class="countdown">${esc(cd)}</p>` : ''}${sync.conf.code ? syncPill() : ''}</header>`;
 
     if (live().some((i) => i.sample)) {
       h += `<div class="sample-banner"><span>Stai guardando dati di esempio.</span><button type="button" class="link" data-action="clear-sample">Elimina l'esempio</button></div>`;
@@ -403,11 +409,16 @@
       <div class="form-actions"><button class="btn primary" type="submit">Salva</button></div>
     </form>
 
-    <section class="set-section" aria-labelledby="h-sync">
-      <h2 id="h-sync">Sincronizza con il partner</h2>
-      <p>I dati stanno su questo telefono. Per allinearli con l'altro, uno dei due invia un codice e l'altro lo incolla: le spese vengono unite e per ciascuna vince la modifica più recente. Poi fate lo stesso al contrario.</p>
-      ${lastSync ? `<p class="small muted" style="margin-top:.5rem">Ultima unione di dati: ${esc(lastSync)}</p>` : ''}
-      <div class="btns"><button type="button" class="btn primary" data-action="sync-send">Invia i miei dati</button><button type="button" class="btn" data-action="sync-receive">Incolla dati ricevuti</button></div>
+    <section class="set-section" aria-labelledby="h-sync" id="sync-section">
+      <h2 id="h-sync">Sincronizzazione</h2>
+      ${sync.conf.code
+        ? `<p>Questo telefono è collegato: ogni spesa inserita qui o sull'altro telefono compare subito su entrambi.</p>
+           ${syncPill()}
+           <div class="btns"><button type="button" class="btn" data-action="sync-show">Mostra il codice di coppia</button><button type="button" class="btn danger" data-action="sync-unpair">Scollega questo telefono</button></div>`
+        : `<p>Collegate i due telefoni: ogni spesa inserita da uno compare subito sull'altro. I dati viaggiano cifrati e solo i vostri telefoni possono leggerli.</p>
+           <div class="btns"><button type="button" class="btn primary" data-action="sync-create">Crea un codice di coppia</button><button type="button" class="btn" data-action="sync-join">Ho già un codice</button></div>
+           <p class="small muted" style="margin-top:.75rem">Il codice si crea su un solo telefono. L'altro lo inserisce con «Ho già un codice».</p>`}
+      ${lastSync ? `<p class="small muted" style="margin-top:.75rem">Ultimo aggiornamento ricevuto: ${esc(lastSync)}</p>` : ''}
     </section>
 
     <section class="set-section" aria-labelledby="h-bk">
@@ -428,8 +439,9 @@
 
     <section class="set-section" aria-labelledby="h-reset">
       <h2 id="h-reset">Cancella tutto</h2>
-      <p>Elimina tutte le spese e le impostazioni da questo telefono. Salvate prima un backup.</p>
-      <div class="btns"><button type="button" class="btn danger" data-action="reset">Cancella tutti i dati</button></div>
+      ${sync.conf.code
+        ? '<p>Scollega questo telefono e ne cancella spese e impostazioni. Sull\'altro telefono e sul server i dati restano.</p><div class="btns"><button type="button" class="btn danger" data-action="reset">Scollega e cancella da questo telefono</button></div>'
+        : '<p>Elimina tutte le spese e le impostazioni da questo telefono. Salvate prima un backup.</p><div class="btns"><button type="button" class="btn danger" data-action="reset">Cancella tutti i dati</button></div>'}
     </section>
     <p class="foot">Spese del matrimonio, versione ${VERSION}. Funziona anche offline.</p>`;
   }
@@ -482,6 +494,8 @@
     if (sheet.open) { if (typeof sheet.close === 'function') sheet.close(); else sheet.removeAttribute('open'); }
   }
   sheet.addEventListener('close', () => {
+    // l'evento arriva in ritardo: se nel frattempo il foglio è stato riaperto, non va toccato
+    if (sheet.open) return;
     document.body.classList.remove('locked');
     sheetRefresh = null;
     sheetBody.innerHTML = '';
@@ -622,36 +636,14 @@
   }
   const snapshot = () => JSON.stringify(state);
 
-  /* ---------------- sincronizzazione ---------------- */
+  /* ---------------- backup e import ---------------- */
   function payload() {
-    return { app: APP_ID, v: 1, exportedAt: now(), settings: state.settings, categories: state.categories, items: state.items.filter((i) => !i.sample) };
+    return { app: APP_ID, v: 1, exportedAt: now(), settings: state.settings, categories: state.categories, catU: state.catU, items: state.items.filter((i) => !i.sample && !i.deleted) };
   }
   const b64u = {
     enc(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); },
     dec(str) { const s = str.replace(/-/g, '+').replace(/_/g, '/'); const bin = atob(s + '==='.slice((s.length + 3) % 4)); const out = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i); return out; }
   };
-  async function streamBytes(bytes, transform) {
-    const stream = new Blob([bytes]).stream().pipeThrough(transform);
-    return new Uint8Array(await new Response(stream).arrayBuffer());
-  }
-  async function encodeCode() {
-    const json = new TextEncoder().encode(JSON.stringify(payload()));
-    if ('CompressionStream' in window) {
-      try { return `${CODE_PREFIX}.z.${b64u.enc(await streamBytes(json, new CompressionStream('gzip')))}`; } catch (e) { /* ripiego */ }
-    }
-    return `${CODE_PREFIX}.j.${b64u.enc(json)}`;
-  }
-  async function decodeCode(raw) {
-    const str = String(raw || '').replace(/\s+/g, '');
-    const m = str.match(new RegExp(`${CODE_PREFIX}\\.([zj])\\.([A-Za-z0-9_-]+)`));
-    if (!m) throw new Error('Il testo incollato non sembra un codice di questa app.');
-    let bytes = b64u.dec(m[2]);
-    if (m[1] === 'z') {
-      if (!('DecompressionStream' in window)) throw new Error('Questo browser non sa leggere il codice compresso. Aggiornate il sistema o usate il file di backup.');
-      bytes = await streamBytes(bytes, new DecompressionStream('gzip'));
-    }
-    return parseIncoming(new TextDecoder().decode(bytes));
-  }
   function parseIncoming(text) {
     let data;
     try { data = JSON.parse(text); } catch (e) { throw new Error('Il contenuto non è leggibile.'); }
@@ -678,23 +670,277 @@
     }
     state.items = [...map.values()];
     if ((inc.settings.updatedAt || 0) > (state.settings.updatedAt || 0)) state.settings = inc.settings;
+    const before = state.categories.length;
     for (const c of inc.categories) if (!state.categories.includes(c)) state.categories.push(c);
-    state.meta.lastSync = now();
+    if (state.categories.length !== before) touchCategories();
     return { added, updated, removed };
   }
+  /** Sostituisce i dati con quelli importati. Le nuove versioni devono "vincere"
+      anche sull'altro telefono, quindi ricevono la data di adesso. */
   function replaceWith(inc) {
-    const meta = state.meta;
-    state = { ...inc, meta: { ...meta, onboarded: true, lastSync: now() } };
+    const t = now();
+    const keep = new Set(inc.items.map((i) => i.id));
+    const tombs = state.items.filter((i) => !i.sample && !i.deleted && !keep.has(i.id)).map((i) => normItem({ id: i.id, deleted: true, updatedAt: t }));
+    inc.items.forEach((i) => { i.updatedAt = t; });
+    state = { ...inc, items: [...inc.items, ...tombs], settings: { ...inc.settings, updatedAt: t }, catU: t, meta: { ...state.meta, onboarded: true } };
   }
   function openIncoming(inc, source) {
-    const html = `${head('Dati ricevuti', source)}
+    const html = `${head('Dati da importare', source)}
       <p>Contiene ${esc(describeIncoming(inc))}.</p>
-      <p class="muted" style="margin-top:.6rem">Unendo, ogni spesa prende la versione modificata più di recente tra le due. Sostituendo, i dati di questo telefono vengono rimpiazzati.</p>
+      <p class="muted" style="margin-top:.6rem">Unendo, ogni spesa prende la versione modificata più di recente tra le due. Sostituendo, le spese attuali vengono rimpiazzate${sync.conf.code ? ' anche sull\'altro telefono' : ''}.</p>
       <div class="form-actions"><button type="button" class="btn primary" data-action="merge-confirm">Unisci ai miei dati</button><button type="button" class="btn danger" data-action="replace-confirm">Sostituisci tutto</button></div>`;
     pendingIncoming = inc;
     openSheet(html);
   }
   let pendingIncoming = null;
+
+  /* ---------------- sincronizzazione in tempo reale ----------------
+     Protocollo con il server (worker/index.js):
+       → {t:'hello', since}         ← {t:'sync', records, seq, reset}
+       → {t:'put', records}         ← {t:'ack', ack, seq}
+                                    ← {t:'changes', records, seq}  (modifiche dell'altro telefono)
+     Un record è {id, u (data modifica), d (eliminato), c (contenuto cifrato)}. */
+  const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+  const CODE_RE = /^[0-9A-HJKMNP-TV-Z]{25}$/;
+  const newPairCode = () => Array.from(crypto.getRandomValues(new Uint8Array(25)), (x) => CROCKFORD[x & 31]).join('');
+  const normCode = (s) => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+  const fmtCode = (c) => (c.match(/.{1,5}/g) || []).join('-');
+
+  function loadSync() {
+    try {
+      const s = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
+      if (s && CODE_RE.test(s.code || '')) return { code: s.code, lastSeq: Math.max(0, toInt(s.lastSeq)), pushed: s.pushed && typeof s.pushed === 'object' ? s.pushed : {} };
+    } catch (e) { /* niente */ }
+    return { code: '', lastSeq: 0, pushed: {} };
+  }
+  const sync = {
+    conf: loadSync(), status: 'off', ws: null, key: null, room: '', retry: 0,
+    retryTimer: 0, pingTimer: 0, flushTimer: 0, lastPong: 0, inflight: {},
+    queue: Promise.resolve(), hiddenAt: 0, lastToast: 0
+  };
+  if (sync.conf.code) sync.status = 'connecting';
+  function saveSync() { try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync.conf)); } catch (e) { /* niente */ } }
+
+  async function deriveKeys(code) {
+    const enc = new TextEncoder();
+    const roomBuf = await crypto.subtle.digest('SHA-256', enc.encode(`ourwedding:room:${code}`));
+    const keyBuf = await crypto.subtle.digest('SHA-256', enc.encode(`ourwedding:key:${code}`));
+    sync.room = Array.from(new Uint8Array(roomBuf), (b) => b.toString(16).padStart(2, '0')).join('');
+    sync.key = await crypto.subtle.importKey('raw', keyBuf, 'AES-GCM', false, ['encrypt', 'decrypt']);
+  }
+  async function encrypt(id, obj) {
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: new TextEncoder().encode(id) }, sync.key, new TextEncoder().encode(JSON.stringify(obj))));
+    const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
+    return b64u.enc(out);
+  }
+  async function decrypt(id, c) {
+    const bytes = b64u.dec(c);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.subarray(0, 12), additionalData: new TextEncoder().encode(id) }, sync.key, bytes.subarray(12));
+    return JSON.parse(new TextDecoder().decode(pt));
+  }
+
+  function localRecords() {
+    const out = [];
+    for (const it of state.items) {
+      if (it.sample) continue;
+      const { sample, ...data } = it;
+      out.push({ id: it.id, u: it.updatedAt || 0, d: it.deleted, obj: it.deleted ? { id: it.id, deleted: true } : data });
+    }
+    if (state.settings.updatedAt) out.push({ id: '_settings', u: state.settings.updatedAt, d: false, obj: state.settings });
+    if (state.catU) out.push({ id: '_categories', u: state.catU, d: false, obj: state.categories });
+    return out;
+  }
+  const pending = () => localRecords().filter((r) => r.u > (sync.conf.pushed[r.id] || 0) && r.u > (sync.inflight[r.id] || 0));
+
+  function scheduleFlush() {
+    if (!sync.conf.code) return;
+    clearTimeout(sync.flushTimer);
+    sync.flushTimer = setTimeout(flush, 120);
+    setSyncStatus();
+  }
+  async function flush() {
+    const ws = sync.ws;
+    if (!ws || ws.readyState !== 1 || !sync.key) return;
+    const recs = pending();
+    for (let i = 0; i < recs.length; i += 100) {
+      const chunk = recs.slice(i, i + 100);
+      chunk.forEach((r) => { sync.inflight[r.id] = r.u; });
+      const records = await Promise.all(chunk.map(async (r) => ({ id: r.id, u: r.u, d: r.d ? 1 : 0, c: await encrypt(r.id, r.obj) })));
+      if (sync.ws !== ws || ws.readyState !== 1) { sync.inflight = {}; return; }
+      ws.send(JSON.stringify({ t: 'put', records }));
+    }
+    setSyncStatus();
+  }
+
+  /** Applica i record arrivati dal server. Restituisce true se qualcosa è cambiato. */
+  async function applyRemote(records) {
+    let changed = false;
+    for (const r of records || []) {
+      sync.conf.pushed[r.id] = Math.max(sync.conf.pushed[r.id] || 0, r.u);
+      let obj;
+      try { obj = await decrypt(r.id, r.c); } catch (e) { continue; }
+      if (r.id === '_settings') {
+        if (r.u > (state.settings.updatedAt || 0)) { state.settings = { ...normalize({ settings: obj }).settings, updatedAt: r.u }; changed = true; }
+        continue;
+      }
+      if (r.id === '_categories') {
+        if (r.u > (state.catU || 0) && Array.isArray(obj) && obj.length) { state.categories = obj.map(String); state.catU = r.u; changed = true; }
+        continue;
+      }
+      const it = normItem({ ...obj, id: r.id, updatedAt: r.u, deleted: !!r.d || !!obj.deleted, sample: false });
+      const idx = state.items.findIndex((i) => i.id === r.id);
+      if (idx < 0) { state.items.push(it); changed = true; }
+      else if (r.u > (state.items[idx].updatedAt || 0)) { state.items[idx] = it; changed = true; }
+    }
+    return changed;
+  }
+  function afterRemote(notify) {
+    state.meta.lastSync = now();
+    if (live().some((i) => !i.sample)) state.meta.onboarded = true;
+    save();
+    render();
+    // il dettaglio aperto si aggiorna; un modulo in compilazione resta com'è
+    if (sheet.open && sheetRefresh) sheetRefresh();
+    if (notify && now() - sync.lastToast > 4000) { sync.lastToast = now(); toast("Aggiornato dall'altro telefono"); }
+  }
+  async function handleMessage(m) {
+    if (m.t === 'sync') {
+      if (m.reset) sync.conf.pushed = {};
+      const changed = await applyRemote(m.records);
+      sync.conf.lastSeq = toInt(m.seq);
+      saveSync();
+      if (changed) afterRemote(false);
+      setSyncStatus('online');
+      flush();
+    } else if (m.t === 'changes') {
+      const changed = await applyRemote(m.records);
+      sync.conf.lastSeq = Math.max(sync.conf.lastSeq, toInt(m.seq));
+      saveSync();
+      if (changed) afterRemote(true);
+    } else if (m.t === 'ack') {
+      for (const a of m.ack || []) {
+        sync.conf.pushed[a.id] = Math.max(sync.conf.pushed[a.id] || 0, a.u);
+        if ((sync.inflight[a.id] || 0) <= a.u) delete sync.inflight[a.id];
+      }
+      sync.conf.lastSeq = Math.max(sync.conf.lastSeq, toInt(m.seq));
+      saveSync();
+      setSyncStatus();
+      if (pending().length) scheduleFlush();
+    }
+  }
+
+  async function connect() {
+    clearTimeout(sync.retryTimer);
+    if (!sync.conf.code) { setSyncStatus('off'); return; }
+    if (sync.ws && sync.ws.readyState <= 1) return;
+    if (!window.crypto || !crypto.subtle) { setSyncStatus('offline'); return; }
+    if (!sync.key) await deriveKeys(sync.conf.code);
+    if (navigator.onLine === false) { setSyncStatus('offline'); return; }
+    setSyncStatus(sync.retry > 2 ? 'offline' : 'connecting');
+    const url = new URL(`/api/rooms/${sync.room}/ws`, location.href);
+    url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    let ws;
+    try { ws = new WebSocket(url.href); } catch (e) { reconnectLater(); return; }
+    sync.ws = ws;
+    sync.inflight = {};
+    ws.onopen = () => {
+      sync.retry = 0;
+      sync.lastPong = Date.now();
+      ws.send(JSON.stringify({ t: 'hello', since: sync.conf.lastSeq }));
+      flush();
+      clearInterval(sync.pingTimer);
+      sync.pingTimer = setInterval(() => {
+        if (sync.ws !== ws || ws.readyState !== 1) return;
+        if (Date.now() - sync.lastPong > 50000) { dropConnection(); return; }
+        try { ws.send('ping'); } catch (e) { /* niente */ }
+      }, 20000);
+    };
+    ws.onmessage = (e) => {
+      if (e.data === 'pong') { sync.lastPong = Date.now(); return; }
+      let m;
+      try { m = JSON.parse(e.data); } catch (err) { return; }
+      sync.lastPong = Date.now();
+      sync.queue = sync.queue.then(() => handleMessage(m)).catch((err) => console.warn('Sincronizzazione', err));
+    };
+    ws.onclose = () => { if (sync.ws === ws) { sync.ws = null; clearInterval(sync.pingTimer); sync.inflight = {}; reconnectLater(); } };
+    ws.onerror = () => { /* segue onclose */ };
+  }
+  function dropConnection() {
+    const ws = sync.ws;
+    sync.ws = null;
+    clearInterval(sync.pingTimer);
+    sync.inflight = {};
+    if (ws) { try { ws.close(); } catch (e) { /* niente */ } }
+  }
+  function reconnectLater() {
+    if (!sync.conf.code) return;
+    clearTimeout(sync.retryTimer);
+    const delays = [500, 1500, 3000, 6000, 12000, 20000, 30000];
+    const d = delays[Math.min(sync.retry, delays.length - 1)];
+    sync.retry++;
+    setSyncStatus(navigator.onLine === false || sync.retry > 2 ? 'offline' : 'connecting');
+    sync.retryTimer = setTimeout(connect, d);
+  }
+  function reconnectNow() { sync.retry = 0; dropConnection(); connect(); }
+
+  function syncText() {
+    const n = sync.conf.code ? pending().length : 0;
+    const mods = `${n} ${n === 1 ? 'modifica' : 'modifiche'}`;
+    switch (sync.status) {
+      case 'online': return n ? 'Invio in corso…' : 'Sincronizzato in tempo reale';
+      case 'connecting': return 'Connessione in corso…';
+      case 'offline': return n ? `Offline, ${mods} da inviare` : 'Offline, si aggiorna al ritorno della rete';
+      default: return '';
+    }
+  }
+  const syncPill = () => `<p class="sync-pill" data-sync-pill data-state="${sync.status}"><i aria-hidden="true"></i><span>${esc(syncText())}</span></p>`;
+  function setSyncStatus(s) {
+    if (s) sync.status = s;
+    document.querySelectorAll('[data-sync-pill]').forEach((el) => {
+      el.dataset.state = sync.status;
+      const sp = el.querySelector('span');
+      if (sp) sp.textContent = syncText();
+    });
+  }
+  function pairWith(code) {
+    dropConnection();
+    clearTimeout(sync.retryTimer);
+    sync.conf = { code, lastSeq: 0, pushed: {} };
+    sync.key = null;
+    sync.retry = 0;
+    saveSync();
+    // l'esempio non va mai inviato all'altro telefono
+    state.items = state.items.filter((i) => !i.sample);
+    save();
+    connect();
+  }
+  function unpair() {
+    dropConnection();
+    clearTimeout(sync.retryTimer);
+    sync.conf = { code: '', lastSeq: 0, pushed: {} };
+    sync.key = null;
+    saveSync();
+    setSyncStatus('off');
+  }
+  function openPairCode() {
+    const code = sync.conf.code;
+    const link = `${location.origin}${location.pathname}#coppia=${code}`;
+    openSheet(`${head('Codice di coppia')}
+      <p>Sull'altro telefono aprite l'app, andate in <strong>Impostazioni</strong>, toccate <strong>Ho già un codice</strong> e inserite:</p>
+      <p class="pair-code" id="pair-code" aria-label="${esc(fmtCode(code).split('').join(' '))}">${fmtCode(code).split('-').map((g) => `<span>${esc(g)}</span>`).join('-<wbr>')}</p>
+      <div class="form-actions"><button type="button" class="btn primary" data-action="copy-pair">Copia codice</button>${navigator.share ? '<button type="button" class="btn" data-action="share-pair">Condividi</button>' : ''}</div>
+      <p class="small muted" style="margin-top:1.25rem">Chi ha questo codice può vedere e modificare le vostre spese: tenetelo tra voi due.</p>
+      <input type="hidden" id="pair-link" value="${esc(link)}">`);
+  }
+  function openPairJoin(prefill = '') {
+    openSheet(`${head('Collega questo telefono')}
+      <form data-form="pair" novalidate autocomplete="off">
+        <label class="field"><span>Codice di coppia</span><input type="text" name="code" value="${esc(prefill ? fmtCode(normCode(prefill)) : '')}" placeholder="XXXXX-XXXXX-XXXXX-XXXXX-XXXXX" autocapitalize="characters" spellcheck="false" autofocus><span class="hint">Lo trovate sull'altro telefono in Impostazioni, Mostra il codice di coppia.</span></label>
+        ${live().some((i) => !i.sample) ? '<p class="small muted" style="margin-top:1rem">Le spese già presenti su questo telefono verranno unite a quelle dell\'altro.</p>' : ''}
+        <div class="form-actions"><button class="btn primary" type="submit">Collega</button></div>
+      </form>`);
+  }
 
   async function shareOrDownload(filename, text, mime) {
     const blob = new Blob([text], { type: mime });
@@ -792,9 +1038,16 @@
     },
     undo: () => {
       const snap = toastEl._undo; if (!snap) return;
-      state = normalize(JSON.parse(snap));
-      // le voci ripristinate devono vincere alla prossima sincronizzazione
-      state.items.forEach((i) => { i.updatedAt = Math.max(i.updatedAt || 0, now()); });
+      const prev = normalize(JSON.parse(snap));
+      // ciò che torna indietro deve "vincere" anche sull'altro telefono
+      const t = now();
+      const cur = new Map(state.items.map((i) => [i.id, JSON.stringify(i)]));
+      prev.items.forEach((i) => { if (cur.get(i.id) !== JSON.stringify(i)) i.updatedAt = Math.max(t, (i.updatedAt || 0) + 1); });
+      const prevIds = new Set(prev.items.map((i) => i.id));
+      for (const i of state.items) if (!prevIds.has(i.id) && !i.sample) prev.items.push(normItem({ id: i.id, deleted: true, updatedAt: t }));
+      if (JSON.stringify(prev.settings) !== JSON.stringify(state.settings)) prev.settings.updatedAt = t;
+      if (JSON.stringify(prev.categories) !== JSON.stringify(state.categories)) prev.catU = t;
+      state = prev;
       toastEl.hidden = true; toastEl._undo = null;
       save(); render();
       if (sheet.open && sheetRefresh) sheetRefresh();
@@ -808,30 +1061,25 @@
     },
     'export-csv': async () => { await shareOrDownload(`spese-matrimonio-${todayISO()}.csv`, csv(), 'text/csv'); },
     'import-file': () => { const f = $('#file-input'); f.value = ''; f.click(); },
-    'sync-send': async () => {
-      const code = await encodeCode();
-      const canShare = !!navigator.share;
-      openSheet(`${head('Invia i miei dati')}
-        <p>Copiate il codice e mandatelo all'altro telefono, per esempio su WhatsApp. Lì, da Impostazioni, scegliete <strong>Incolla dati ricevuti</strong>.</p>
-        <label class="field"><span>Codice (${Math.ceil(code.length / 1024)} kB)</span><textarea class="code-box" readonly rows="5" id="code-out">${esc(code)}</textarea></label>
-        <div class="form-actions"><button type="button" class="btn primary" data-action="copy-code">Copia codice</button>${canShare ? '<button type="button" class="btn" data-action="share-code">Condividi</button>' : ''}</div>`);
+    'sync-create': () => { if (!sync.conf.code) pairWith(newPairCode()); render(); openPairCode(); },
+    'sync-join': () => openPairJoin(),
+    'sync-show': () => openPairCode(),
+    'sync-unpair': () => {
+      if (!confirm('Scollegare questo telefono? Le spese restano qui, ma non riceverà più gli aggiornamenti dell\'altro.')) return;
+      unpair(); render(); toast('Telefono scollegato');
     },
-    'copy-code': async () => {
-      const ta = $('#code-out'); if (!ta) return;
-      try { await navigator.clipboard.writeText(ta.value); toast('Codice copiato'); }
-      catch (e) { ta.focus(); ta.select(); try { document.execCommand('copy'); toast('Codice copiato'); } catch (e2) { toast('Selezionate il testo e copiatelo a mano'); } }
+    'copy-pair': async () => {
+      const code = fmtCode(sync.conf.code);
+      try { await navigator.clipboard.writeText(code); toast('Codice copiato'); }
+      catch (e) {
+        const r = document.createRange(); const el = $('#pair-code');
+        if (el) { r.selectNodeContents(el); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+        toast('Tenete premuto sul codice per copiarlo');
+      }
     },
-    'share-code': async () => { const ta = $('#code-out'); if (!ta) return; try { await navigator.share({ text: ta.value }); } catch (e) { /* annullato */ } },
-    'sync-receive': () => {
-      openSheet(`${head('Incolla dati ricevuti')}
-        <form data-form="paste" novalidate>
-          <label class="field"><span>Codice ricevuto</span><textarea class="code-box" name="code" rows="6" placeholder="Inizia con ${CODE_PREFIX}." autofocus></textarea></label>
-          <div class="form-actions"><button class="btn primary" type="submit">Continua</button>${navigator.clipboard && navigator.clipboard.readText ? '<button class="btn" type="button" data-action="paste-clip">Incolla dagli appunti</button>' : ''}</div>
-        </form>`);
-    },
-    'paste-clip': async () => {
-      try { const t = await navigator.clipboard.readText(); const ta = sheetBody.querySelector('textarea[name="code"]'); if (ta) ta.value = t; }
-      catch (e) { toast('Tenete premuto nel riquadro e scegliete Incolla'); }
+    'share-pair': async () => {
+      const link = $('#pair-link') ? $('#pair-link').value : '';
+      try { await navigator.share({ text: `Codice per collegare l'app delle spese del matrimonio: ${fmtCode(sync.conf.code)}\n${link}` }); } catch (e) { /* annullato */ }
     },
     'merge-confirm': () => {
       if (!pendingIncoming) return;
@@ -855,23 +1103,26 @@
       commit('Dati sostituiti', snap);
     },
     reset: () => {
-      if (!confirm('Cancellare tutte le spese e le impostazioni da questo telefono?')) return;
-      const snap = snapshot();
+      const paired = !!sync.conf.code;
+      if (!confirm(paired ? 'Scollegare questo telefono e cancellarne tutte le spese? Sull\'altro telefono restano.' : 'Cancellare tutte le spese e le impostazioni da questo telefono?')) return;
+      if (paired) unpair();
+      const snap = paired ? null : snapshot();
       state = blank(); state.meta.onboarded = true;
       ui.cat = ''; ui.filter = 'all'; ui.q = '';
       commit('Dati cancellati', snap);
     },
-    'cat-up': (el) => { const i = Number(el.dataset.i); if (i > 0) { const c = state.categories; [c[i - 1], c[i]] = [c[i], c[i - 1]]; commit(); } },
+    'cat-up': (el) => { const i = Number(el.dataset.i); if (i > 0) { const c = state.categories; [c[i - 1], c[i]] = [c[i], c[i - 1]]; touchCategories(); commit(); } },
     'cat-rename': (el) => {
       const i = Number(el.dataset.i); const old = state.categories[i];
       const name = (prompt('Nuovo nome della categoria', old) || '').trim();
       if (!name || name === old) return;
       if (state.categories.includes(name)) { toast('Esiste già una categoria con questo nome'); return; }
       state.categories[i] = name;
+      touchCategories();
       for (const it of live()) if (it.category === old) { it.category = name; touch(it); }
       commit('Categoria rinominata');
     },
-    'cat-del': (el) => { const i = Number(el.dataset.i); state.categories.splice(i, 1); commit('Categoria eliminata'); },
+    'cat-del': (el) => { const i = Number(el.dataset.i); state.categories.splice(i, 1); touchCategories(); commit('Categoria eliminata'); },
     'skip-onboarding': () => { state.meta.onboarded = true; save(); closeSheet(); }
   };
 
@@ -899,7 +1150,7 @@
     if (t.name === 'category' && t.value === '__new') {
       const name = (prompt('Nome della nuova categoria') || '').trim();
       if (name) {
-        if (!state.categories.includes(name)) { state.categories.push(name); save(); }
+        if (!state.categories.includes(name)) { state.categories.push(name); touchCategories(); save(); }
         t.innerHTML = catOptions(name);
       } else {
         t.selectedIndex = 0;
@@ -984,12 +1235,20 @@
       if (!name) return;
       if (state.categories.includes(name)) { toast('Questa categoria esiste già'); return; }
       state.categories.push(name);
+      touchCategories();
       commit('Categoria aggiunta');
     },
-    async paste(f) {
-      const ta = f.elements.code;
-      try { openIncoming(await decodeCode(ta.value), 'dal codice incollato'); }
-      catch (err) { fieldError(ta, err.message || 'Codice non valido.'); }
+    pair(f) {
+      const inp = f.elements.code;
+      const code = normCode(inp.value);
+      if (!CODE_RE.test(code)) return fieldError(inp, 'Il codice ha 25 caratteri tra lettere e numeri. Controllate di averlo copiato tutto.');
+      if (code === sync.conf.code) { closeSheet(); toast('Questo telefono usa già questo codice'); return; }
+      pairWith(code);
+      state.meta.onboarded = true;
+      save();
+      closeSheet();
+      render();
+      toast('Telefono collegato');
     },
     onboarding(f) {
       const el = f.elements;
@@ -1019,7 +1278,7 @@
         <label class="field"><span>Data del matrimonio</span><input type="date" name="date"></label>
         <label class="field"><span>Budget complessivo</span><input type="text" name="budget" inputmode="decimal" placeholder="Facoltativo, es. 35.000"></label>
         <div class="form-actions"><button class="btn primary" type="submit">Inizia</button><button class="btn" type="button" data-action="skip-onboarding">Più tardi</button></div>
-        <p class="small muted" style="margin-top:1.25rem">Avete già i dati sull'altro telefono? Chiudete e andate in Impostazioni, poi Incolla dati ricevuti.</p>
+        <p class="small muted" style="margin-top:1.25rem">L'altro telefono usa già l'app? <button type="button" class="link" data-action="sync-join">Inserite il codice di coppia</button> e le spese arrivano da sole.</p>
       </form>`, { focus: false });
   }
 
@@ -1029,13 +1288,34 @@
 
   // aggiorna i conti allo scoccare della mezzanotte o al ritorno nell'app
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState !== 'visible') return;
+    if (document.visibilityState !== 'visible') { sync.hiddenAt = Date.now(); return; }
     // un'altra scheda può aver modificato i dati
     const fresh = load();
     if (JSON.stringify(fresh) !== JSON.stringify(state)) { state = fresh; }
     if (!sheet.open) render();
+    // al ritorno nell'app (soprattutto su iPhone) la connessione può essere morta: si riapre
+    if (sync.conf.code) {
+      if (!sync.ws || sync.ws.readyState > 1 || Date.now() - sync.hiddenAt > 15000) reconnectNow();
+      else scheduleFlush();
+    }
   });
-  window.addEventListener('storage', (e) => { if (e.key === KEY) { state = load(); if (!sheet.open) render(); } });
+  window.addEventListener('storage', (e) => {
+    if (e.key === KEY) { state = load(); if (!sheet.open) render(); }
+    if (e.key === SYNC_KEY) { const c = loadSync(); if (c.code !== sync.conf.code) { sync.conf = c; sync.key = null; reconnectNow(); render(); } }
+  });
+  window.addEventListener('online', () => { if (sync.conf.code) reconnectNow(); });
+  window.addEventListener('offline', () => { if (sync.conf.code) setSyncStatus('offline'); });
+
+  // link di abbinamento: .../#coppia=CODICE
+  function checkPairLink() {
+    const m = location.hash.match(/coppia=([0-9A-Za-z-]+)/);
+    if (!m) return;
+    history.replaceState(null, '', location.pathname + location.search);
+    if (normCode(m[1]) !== sync.conf.code) openPairJoin(m[1]);
+  }
+  checkPairLink();
+  window.addEventListener('hashchange', checkPairLink);
+  connect();
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
@@ -1043,5 +1323,5 @@
   }
 
   // per i test
-  window.__speseNozze = { parseAmount, itemStats, totals: () => { const t = totals(); return { ...t, byCat: Object.fromEntries(t.byCat), byPayer: Object.fromEntries(t.byPayer) }; }, mergeIncoming, encodeCode, decodeCode, getState: () => state };
+  window.__speseNozze = { parseAmount, itemStats, totals: () => { const t = totals(); return { ...t, byCat: Object.fromEntries(t.byCat), byPayer: Object.fromEntries(t.byPayer) }; }, mergeIncoming, getState: () => state, sync: () => ({ status: sync.status, conf: sync.conf, pending: pending().length }) };
 })();

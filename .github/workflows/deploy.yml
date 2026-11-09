@@ -1,0 +1,57 @@
+name: Pubblica su Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Controlla le chiavi Cloudflare
+        id: check
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -n "$TOKEN" ] && [ -n "$ACCOUNT" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Pubblicazione saltata: aggiungete i segreti CLOUDFLARE_API_TOKEN e CLOUDFLARE_ACCOUNT_ID in Settings > Secrets and variables > Actions, poi rilanciate questo workflow."
+            echo "### Pubblicazione saltata" >> "$GITHUB_STEP_SUMMARY"
+            echo "Mancano i segreti \`CLOUDFLARE_API_TOKEN\` e/o \`CLOUDFLARE_ACCOUNT_ID\`. Vedi il README." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.check.outputs.ok == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ok == 'true'
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Installa wrangler
+        if: steps.check.outputs.ok == 'true'
+        run: npm ci
+
+      - name: Pubblica app e sincronizzazione
+        id: deploy
+        if: steps.check.outputs.ok == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Indirizzo dell'app
+        if: steps.check.outputs.ok == 'true'
+        run: |
+          echo "### App pubblicata" >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.deploy.outputs.deployment-url }}" >> "$GITHUB_STEP_SUMMARY"

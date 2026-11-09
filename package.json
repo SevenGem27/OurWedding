@@ -1,0 +1,12 @@
+{
+  "name": "ourwedding",
+  "private": true,
+  "description": "Spese del matrimonio: PWA con sincronizzazione in tempo reale su Cloudflare",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^4.159.0"
+  }
+}
