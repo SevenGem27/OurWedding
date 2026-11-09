@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Spese del matrimonio</title>
+  <meta name="description" content="Acconti versati, importi da pagare e scadenze delle spese per il matrimonio.">
+  <meta name="theme-color" content="#F6F7F4" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#111815" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Spese nozze">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <link rel="preload" href="fonts/bodoni-moda.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="fonts/hanken-grotesk.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main id="view" tabindex="-1" aria-live="off"></main>
+
+  <button type="button" class="fab" data-action="new-item" id="fab">
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="20" height="20"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg>
+    Aggiungi spesa
+  </button>
+
+  <nav class="tabs" aria-label="Sezioni">
+    <button type="button" data-action="tab" data-tab="home">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="9" cy="12" r="5.5"/><circle cx="15" cy="12" r="5.5"/></svg>
+      <span>Riepilogo</span>
+    </button>
+    <button type="button" data-action="tab" data-tab="items">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h9"/></svg>
+      <span>Spese</span>
+    </button>
+    <button type="button" data-action="tab" data-tab="due">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>
+      <span>Scadenze</span>
+    </button>
+    <button type="button" data-action="tab" data-tab="settings">
+      <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>
+      <span>Impostazioni</span>
+    </button>
+  </nav>
+
+  <dialog id="sheet" class="sheet" aria-labelledby="sheet-title">
+    <div class="sheet-body" id="sheet-body"></div>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+  <input type="file" id="file-input" accept=".json,application/json" hidden>
+
+  <noscript><p class="noscript">Per usare l'app attiva JavaScript nel browser.</p></noscript>
+  <script src="app.js" defer></script>
+</body>
+</html>
