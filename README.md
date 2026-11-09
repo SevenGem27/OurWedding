@@ -7,34 +7,13 @@ senza connessione: le modifiche fatte offline partono appena torna la rete.
 
 Tutto gira su Cloudflare, piano gratuito: un solo Worker serve l'app e la sincronizzazione.
 
-## Messa online (una volta sola, circa 5 minuti)
+**Apri l'app:** <https://ourwedding.teo-monf96.workers.dev>
 
-Ogni push su `main` pubblica l'app su Cloudflare tramite GitHub Actions. Servono due chiavi.
+## Pubblicazione
 
-**1. Token API di Cloudflare**
-1. Aprite <https://dash.cloudflare.com/profile/api-tokens> e scegliete **Create Token**.
-2. Usate il modello **Edit Cloudflare Workers**.
-3. In *Account Resources* scegliete il vostro account; in *Zone Resources* lasciate *All zones*.
-4. **Continue to summary**, poi **Create Token**, e copiate il token (si vede una volta sola).
-
-**2. Account ID**
-Su <https://dash.cloudflare.com> aprite *Workers & Pages*: l'Account ID è nella colonna a destra
-(oppure è il codice esadecimale nell'indirizzo della pagina).
-
-**3. Segreti su GitHub**
-In questo repository: *Settings*, poi *Secrets and variables*, poi *Actions*, poi **New repository secret**. Create:
-- `CLOUDFLARE_API_TOKEN` con il token
-- `CLOUDFLARE_ACCOUNT_ID` con l'Account ID
-
-**4. Pubblicazione**
-Scheda *Actions*, workflow **Pubblica su Cloudflare**, **Run workflow**.
-Alla fine il riepilogo mostra l'indirizzo dell'app, del tipo `https://ourwedding.<vostro-nome>.workers.dev`.
-
-Se è la prima volta che usate i Workers, Cloudflare può chiedervi di scegliere il sottodominio
-`workers.dev`: lo trovate in *Workers & Pages*, poi rilanciate il workflow.
-
-GitHub Pages non serve: se l'avevate attivato potete disattivarlo
-(*Settings*, poi *Pages*, poi *Source: None*).
+Il repository è collegato a Cloudflare (Workers Builds): ogni push su `main` viene pubblicato
+automaticamente in un paio di minuti. Lo stato dei deploy è in Cloudflare, *Workers & Pages*,
+progetto **ourwedding**, scheda *Deployments*.
 
 ## Installarla sui telefoni
 
@@ -74,7 +53,6 @@ fermerebbe fino alla mezzanotte UTC e l'app continuerebbe a funzionare in locale
 - `public/`: l'app (HTML, CSS, JavaScript, service worker, icone, caratteri)
 - `worker/index.js`: server di sincronizzazione (Worker + Durable Object con WebSocket)
 - `wrangler.jsonc`: configurazione Cloudflare
-- `.github/workflows/deploy.yml`: pubblicazione automatica
 
 Per provarla sul computer: `npm install` e poi `npm run dev`, che apre l'app su <http://localhost:8787>.
 
