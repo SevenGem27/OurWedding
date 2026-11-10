@@ -7,7 +7,7 @@ senza connessione: le modifiche fatte offline partono appena torna la rete.
 
 Tutto gira su Cloudflare, piano gratuito: un solo Worker serve l'app e la sincronizzazione.
 
-**Apri l'app:** <https://ourwedding.teo-monf96.workers.dev>
+**Apri l'app:** <https://ourwedding.pwa-user.workers.dev>
 
 ## Pubblicazione
 
