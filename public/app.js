@@ -10,7 +10,7 @@
   const KEY = 'spese-nozze:v1';
   const SYNC_KEY = 'spese-nozze:sync';
   const APP_ID = 'spese-nozze';
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
 
   const DEFAULT_CATEGORIES = [
     'Location e ricevimento', 'Catering', 'Chiesa o Comune', 'Abito sposa', 'Abito sposo',
@@ -235,62 +235,89 @@
   }
 
   /* ---------------- viste ---------------- */
+  const IMG = { hero: 'img/illustrazione.webp', rings: 'img/anelli.webp', coins: 'img/monete.webp' };
+  const ICON_CAL = '<svg class="stat-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="9" width="38" height="34" rx="7" fill="#FFF8F2" stroke="#5A3B2E" stroke-width="2.5"/><path d="M5 19v-3a7 7 0 0 1 7-7h24a7 7 0 0 1 7 7v3z" fill="#EFA8A0" stroke="#5A3B2E" stroke-width="2.5" stroke-linejoin="round"/><path d="M15 5v8M33 5v8" stroke="#5A3B2E" stroke-width="2.5" stroke-linecap="round"/><circle cx="16" cy="27" r="2.3" fill="#D49A35"/><circle cx="24" cy="27" r="2.3" fill="#D49A35"/><circle cx="32" cy="27" r="2.3" fill="#C9D3C6"/><circle cx="16" cy="35" r="2.3" fill="#C9D3C6"/><circle cx="24" cy="35" r="2.3" fill="#6B8F6E"/></svg>';
+  const pageHead = (title, sub = '') => `<header class="page-head"><div><h1 class="page-title">${title}</h1>${sub ? `<p class="page-sub">${sub}</p>` : ''}</div><img class="page-art" src="${IMG.rings}" alt="" width="92" height="74"></header>`;
+  const emptyArt = (title, text, buttons = '') => `<section class="empty"><img class="empty-art" src="${IMG.hero}" alt="" width="240" height="238"><h2>${title}</h2><p>${text}</p>${buttons ? `<div class="btns">${buttons}</div>` : ''}</section>`;
+
+  function dueTile({ it, p }) {
+    const late = p.date && p.date < todayISO();
+    const d = p.date ? parseISO(p.date) : null;
+    const month = d ? d.toLocaleDateString('it-IT', { month: 'short' }).replace('.', '') : 'senza';
+    const year = d && d.getFullYear() !== new Date().getFullYear() ? ` ${String(d.getFullYear()).slice(2)}` : '';
+    const label = `${it.name}, ${p.type}, ${money(p.amount)}${d ? `, ${fmtDate(p.date)}` : ', senza data'}${late ? ', scaduta' : ''}. Modifica`;
+    return `<li><button type="button" class="tile${late ? ' late' : ''}" data-action="edit-pay" data-item="${it.id}" data-pay="${p.id}" aria-label="${esc(label)}">
+      <span class="tile-cal" aria-hidden="true"><span class="tile-month">${esc(month + year)}</span><span class="tile-day">${d ? d.getDate() : '–'}</span></span>
+      <span class="tile-name">${esc(it.name)}</span>
+      <span class="tile-amt">${money(p.amount)}</span>
+      ${late ? `<span class="tile-late">${ICON_LATE}Scaduta</span>` : `<span class="tile-type">${esc(p.type)}</span>`}
+    </button></li>`;
+  }
+
   function viewHome() {
     const s = state.settings;
     const names = [s.name1, s.name2].map((x) => x.trim()).filter(Boolean);
     const t = totals();
     const cd = countdown();
-    let h = `<header><h1 class="couple">${names.length ? esc(names.join(' e ')) : 'Il nostro matrimonio'}</h1>${cd ? `<p class="countdown">${esc(cd)}</p>` : ''}${sync.conf.code ? syncPill() : ''}</header>`;
+    let h = `<header class="home-head"><h1 class="couple">${names.length ? esc(names.join(' e ')) : 'Il nostro matrimonio'}</h1>${cd ? `<p class="countdown">${esc(cd)}</p>` : ''}${sync.conf.code ? syncPill() : ''}</header>`;
 
     if (live().some((i) => i.sample)) {
       h += `<div class="sample-banner"><span>Stai guardando dati di esempio.</span><button type="button" class="link" data-action="clear-sample">Elimina l'esempio</button></div>`;
     }
 
     if (!t.count) {
-      h += `<section class="empty">
-        <h2>Iniziate dalla prima spesa</h2>
-        <p>Inserite un fornitore con l'importo concordato e l'acconto già versato. L'app calcola quanto avete pagato, quanto resta e quando scade ogni rata.</p>
-        <div class="btns"><button type="button" class="btn primary" data-action="new-item">Aggiungi spesa</button><button type="button" class="btn" data-action="load-sample">Vedi un esempio</button></div>
-      </section>`;
-      return h;
+      return h + emptyArt('Iniziate dalla prima spesa',
+        "Inserite un fornitore con l'importo concordato e l'acconto già versato. L'app calcola quanto avete pagato, quanto resta e quando scade ogni rata.",
+        '<button type="button" class="btn primary" data-action="new-item">Aggiungi spesa</button><button type="button" class="btn" data-action="load-sample">Vedi un esempio</button>');
     }
 
     const budget = s.budget || 0;
     const free = budget > t.total ? budget - t.total : 0;
     const mark = budget > 0 && budget < t.total ? budget / t.total : null;
-    h += `<section class="hero" aria-labelledby="h-total">
-      <h2 class="hero-label" id="h-total">Costo totale</h2>
-      <p class="big">${moneyBig(t.total)}</p>
+    h += `<section class="card hero" aria-labelledby="h-total">
+      <div class="hero-top">
+        <img class="hero-art" src="${IMG.rings}" alt="" width="124" height="100">
+        <div class="hero-fig"><h2 class="hero-label" id="h-total">Costo totale</h2><p class="big">${moneyBig(t.total)}</p></div>
+      </div>
       ${t.estimate ? `<p class="hero-note">Include ${money(t.estimate)} di preventivi non ancora confermati</p>` : ''}
       ${bar({ paid: t.paid, toPay: t.toPay, free, budgetMark: mark, label: `Pagato ${money(t.paid)} su ${money(t.total)}, da pagare ${money(t.toPay)}${budget ? `, budget ${money(budget)}` : ''}` })}
-      <dl class="legend">
-        <div><dt><i class="sw paid"></i>Già pagato</dt><dd>${money(t.paid)}</dd></div>
-        <div><dt><i class="sw topay"></i>Da pagare</dt><dd>${money(t.toPay)}</dd></div>
-        ${free ? `<div><dt><i class="sw free"></i>Budget libero</dt><dd>${money(free)}</dd></div>` : ''}
-      </dl>
       ${budget ? (t.total > budget
         ? `<p class="budget-line over">Budget ${money(budget)}: <strong>siete sopra di ${money(t.total - budget)}</strong></p>`
-        : `<p class="budget-line">Budget ${money(budget)}: restano <strong>${money(budget - t.total)}</strong> non ancora impegnati</p>`)
+        : `<p class="budget-line"><i class="sw free"></i>Budget ${money(budget)}: restano <strong>${money(budget - t.total)}</strong> non impegnati</p>`)
         : `<p class="budget-line"><button type="button" class="link" data-action="tab" data-tab="settings">Imposta un budget</button> per vedere quanto margine vi resta.</p>`}
-    </section>`;
+    </section>
+    <div class="duo">
+      <section class="card stat" aria-labelledby="h-paid">
+        <img class="stat-art" src="${IMG.coins}" alt="" width="84" height="40">
+        <h2 class="stat-label" id="h-paid"><i class="sw paid"></i>Già pagato</h2>
+        <p class="stat-val">${money(t.paid)}</p>
+        <p class="stat-sub">${pct(t.paid, t.total)}% del totale</p>
+      </section>
+      <section class="card stat" aria-labelledby="h-topay">
+        ${ICON_CAL}
+        <h2 class="stat-label" id="h-topay"><i class="sw topay"></i>Da pagare</h2>
+        <p class="stat-val">${money(t.toPay)}</p>
+        <p class="stat-sub">${t.unscheduled ? `${money(t.unscheduled)} senza data` : 'Tutto in calendario'}</p>
+      </section>
+    </div>`;
 
-    // prossime scadenze
+    // pagamenti in scadenza
     const due = allPayments('due').sort((a, b) => (a.p.date || '9999').localeCompare(b.p.date || '9999'));
     const lateN = due.filter((x) => x.p.date && x.p.date < todayISO()).length;
-    h += `<section class="section" aria-labelledby="h-due"><div class="section-head"><h2 id="h-due">Prossime scadenze</h2>${due.length > 4 ? '<button type="button" class="link" data-action="tab" data-tab="due">Tutte</button>' : ''}</div>`;
+    h += `<section class="card" aria-labelledby="h-due"><div class="card-head"><h2 id="h-due">Pagamenti in scadenza</h2>${due.length ? '<button type="button" class="link" data-action="tab" data-tab="due">Vedi tutti</button>' : ''}</div>`;
     if (lateN) h += `<div class="callout warn"><p><strong>${lateN === 1 ? 'Un pagamento è scaduto' : `${lateN} pagamenti sono scaduti`}.</strong> Segnateli come pagati o spostate la data.</p></div>`;
     h += due.length
-      ? `<ul class="list">${due.slice(0, 4).map((x) => payRow(x)).join('')}</ul>`
+      ? `<ul class="tiles">${due.slice(0, 10).map(dueTile).join('')}</ul>`
       : '<p class="muted">Nessuna scadenza in programma.</p>';
     if (t.unscheduled > 0) {
       const n = live().filter((i) => itemStats(i).unscheduled > 0).length;
-      h += `<div class="callout"><p><strong>${money(t.unscheduled)}</strong> da pagare non ${t.unscheduled === t.toPay && n === 1 ? 'ha' : 'hanno'} ancora una data (${n} ${n === 1 ? 'spesa' : 'spese'}).</p><button type="button" class="link" data-action="tab" data-tab="due">Programma i saldi</button></div>`;
+      h += `<div class="callout"><p><strong>${money(t.unscheduled)}</strong> da pagare ${n === 1 ? 'non ha' : 'non hanno'} ancora una data (${n} ${n === 1 ? 'spesa' : 'spese'}).</p><button type="button" class="link" data-action="tab" data-tab="due">Programma i saldi</button></div>`;
     }
     h += '</section>';
 
-    // per categoria
+    // per tipo di spesa
     const cats = [...t.byCat.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
-    h += `<section class="section" aria-labelledby="h-cat"><div class="section-head"><h2 id="h-cat">Per tipo di spesa</h2></div><ul class="list">${cats.map((c) => `
+    h += `<section class="card" aria-labelledby="h-cat"><div class="card-head"><h2 id="h-cat">Per tipo di spesa</h2></div><ul class="list">${cats.map((c) => `
       <li><button type="button" class="row" data-action="open-cat" data-cat="${esc(c.name)}">
         <span class="row-top"><span class="row-name">${esc(c.name)}${c.n > 1 ? ` <span class="muted small">(${c.n})</span>` : ''}</span><span class="row-amt">${c.total ? money(c.total) : '–'}</span></span>
         ${c.total ? bar({ paid: c.paid, toPay: c.toPay, thin: true }) : ''}
@@ -300,12 +327,12 @@
     // chi ha pagato
     if (t.paid > 0) {
       const ps = [...t.byPayer.entries()].sort((a, b) => b[1] - a[1]);
-      h += `<section class="section" aria-labelledby="h-who"><div class="section-head"><h2 id="h-who">Chi ha pagato</h2></div><ul class="list">${ps.map(([k, v]) => `<li class="payer"><span>${esc(k)}</span><span>${money(v)}<small>${pct(v, t.paid)}%</small></span></li>`).join('')}</ul></section>`;
+      h += `<section class="card" aria-labelledby="h-who"><div class="card-head"><h2 id="h-who">Chi ha pagato</h2></div><ul class="list">${ps.map(([k, v]) => `<li class="payer"><span>${esc(k)}</span><span>${money(v)}<small>${pct(v, t.paid)}%</small></span></li>`).join('')}</ul></section>`;
     }
 
     // promemoria backup
     const lb = state.meta.lastBackup || 0;
-    if (t.count >= 3 && now() - lb > 14 * 86400000) {
+    if (t.count >= 3 && now() - lb > 14 * 86400000 && !sync.conf.code) {
       h += `<p class="foot">${lb ? `Ultimo backup ${new Date(lb).toLocaleDateString('it-IT', { day: 'numeric', month: 'long' })}.` : 'Non avete ancora salvato un backup.'} <button type="button" class="link" data-action="backup">Salva backup ora</button></p>`;
     }
     return h;
@@ -313,7 +340,7 @@
 
   function viewItems() {
     const t = totals();
-    let h = `<header><h1 class="page-title">Spese</h1><p class="page-sub">${t.count} ${t.count === 1 ? 'voce' : 'voci'}, ${money(t.toPay)} ancora da pagare</p></header>`;
+    let h = pageHead('Spese', t.count ? `${t.count} ${t.count === 1 ? 'voce' : 'voci'}, ${money(t.toPay)} ancora da pagare` : '');
     if (t.count) {
       h += `<label class="vh" for="q">Cerca una spesa</label><input id="q" class="search" type="search" placeholder="Cerca fornitore o nota" value="${esc(ui.q)}" autocomplete="off" enterkeyhint="search">`;
       const chip = (k, l) => `<button type="button" class="chip" data-action="filter" data-f="${k}" aria-pressed="${ui.filter === k}">${l}</button>`;
@@ -332,14 +359,14 @@
       if (q && !(`${it.name} ${it.category} ${it.notes}`.toLowerCase().includes(q))) return false;
       return true;
     });
-    const t = { count: live().length };
+    const count = live().length;
     let h = '';
-    if (ui.cat) h += `<p class="small" style="margin-top:.75rem">Categoria: <strong>${esc(ui.cat)}</strong> <button type="button" class="link" data-action="clear-cat">Mostra tutte</button></p>`;
+    if (ui.cat) h += `<p class="small filter-note">Categoria: <strong>${esc(ui.cat)}</strong> <button type="button" class="link" data-action="clear-cat">Mostra tutte</button></p>`;
 
     if (!items.length) {
-      h += t.count
-        ? '<p class="muted" style="margin-top:2rem">Nessuna spesa corrisponde a questi filtri.</p>'
-        : '<section class="empty"><h2>Ancora nessuna spesa</h2><p>Aggiungete il primo fornitore: bastano nome, categoria e importo concordato.</p><div class="btns"><button type="button" class="btn primary" data-action="new-item">Aggiungi spesa</button></div></section>';
+      h += count
+        ? '<p class="muted filter-note">Nessuna spesa corrisponde a questi filtri.</p>'
+        : emptyArt('Ancora nessuna spesa', 'Aggiungete il primo fornitore: bastano nome, tipo di spesa e importo concordato.', '<button type="button" class="btn primary" data-action="new-item">Aggiungi spesa</button>');
       return h;
     }
     const order = [...state.categories];
@@ -348,7 +375,7 @@
       const group = items.filter((i) => i.category === cat).sort((a, b) => itemStats(b).total - itemStats(a).total);
       if (!group.length) continue;
       const sum = group.reduce((a, i) => a + itemStats(i).total, 0);
-      h += `<div class="group-head"><h2>${esc(cat)}</h2><span>${money(sum)}</span></div><ul class="list">${group.map(itemRow).join('')}</ul>`;
+      h += `<section class="card"><div class="card-head"><h2>${esc(cat)}</h2><span class="muted small">${money(sum)}</span></div><ul class="list">${group.map(itemRow).join('')}</ul></section>`;
     }
     return h;
   }
@@ -365,20 +392,20 @@
     const sum = (arr) => arr.reduce((a, x) => a + x.p.amount, 0);
     const t = totals();
 
-    let h = `<header><h1 class="page-title">Scadenze</h1><p class="page-sub">${money(t.sched)} programmati, ${money(t.unscheduled)} ancora senza data</p></header>`;
-    const block = (title, arr, extra = '') => arr.length
-      ? `<section class="section"><div class="section-head"><h2>${title}</h2><span class="muted small">${money(sum(arr))}</span></div>${extra}<ul class="list">${arr.map((x) => payRow(x)).join('')}</ul></section>`
+    let h = pageHead('Scadenze', t.count ? `${money(t.sched)} programmati, ${money(t.unscheduled)} ancora senza data` : '');
+    const block = (title, arr, cls = '') => arr.length
+      ? `<section class="card${cls}"><div class="card-head"><h2>${title}</h2><span class="muted small">${money(sum(arr))}</span></div><ul class="list">${arr.map((x) => payRow(x)).join('')}</ul></section>`
       : '';
     if (!due.length && !unsched.length && !paid.length) {
-      return h + '<section class="empty"><h2>Niente in calendario</h2><p>Quando aggiungete una rata o un saldo con una data, compare qui in ordine di scadenza.</p></section>';
+      return h + emptyArt('Niente in calendario', 'Quando aggiungete una rata o un saldo con una data, compare qui in ordine di scadenza.');
     }
-    h += block('Scadute', late);
+    h += block('Scadute', late, ' card-late');
     h += block('Nei prossimi 30 giorni', soon);
     h += block('Più avanti', later);
-    if (!due.length) h += '<p class="muted" style="margin-top:2rem">Nessuna rata in programma.</p>';
+    if (!due.length) h += '<p class="muted filter-note">Nessuna rata in programma.</p>';
     if (unsched.length) {
-      h += `<section class="section"><div class="section-head"><h2>Da programmare</h2><span class="muted small">${money(t.unscheduled)}</span></div>
-        <p class="muted small" style="margin-bottom:.5rem">Importi ancora da pagare per cui non avete fissato una data.</p>
+      h += `<section class="card"><div class="card-head"><h2>Da programmare</h2><span class="muted small">${money(t.unscheduled)}</span></div>
+        <p class="muted small card-intro">Importi ancora da pagare per cui non avete fissato una data.</p>
         <ul class="list">${unsched.map(({ it, s }) => `<li><div class="pay" style="grid-template-columns:1fr auto">
           <div class="what"><strong>${esc(it.name)}</strong><span>${esc(it.category)}</span></div>
           <span class="amt">${money(s.unscheduled)}</span>
@@ -386,7 +413,7 @@
         </div></li>`).join('')}</ul></section>`;
     }
     if (paid.length) {
-      h += `<section class="section"><div class="section-head"><h2>Pagamenti fatti</h2><span class="muted small">${money(sum(paid))}</span></div><ul class="list">${paid.map((x) => payRow(x, { actions: false })).join('')}</ul></section>`;
+      h += `<section class="card"><div class="card-head"><h2>Pagamenti fatti</h2><span class="muted small">${money(sum(paid))}</span></div><ul class="list">${paid.map((x) => payRow(x, { actions: false })).join('')}</ul></section>`;
     }
     return h;
   }
@@ -396,8 +423,8 @@
     const counts = new Map();
     for (const it of live()) counts.set(it.category, (counts.get(it.category) || 0) + 1);
     const lastSync = state.meta.lastSync ? new Date(state.meta.lastSync).toLocaleString('it-IT', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : '';
-    return `<header><h1 class="page-title">Impostazioni</h1></header>
-    <form data-form="settings" class="set-section" autocomplete="off" novalidate>
+    return `${pageHead('Impostazioni')}
+    <form data-form="settings" class="card set-section" autocomplete="off" novalidate>
       <h2>Il matrimonio</h2>
       <div class="grid2">
         <label class="field"><span>Primo nome</span><input type="text" name="name1" value="${esc(s.name1)}" placeholder="Es. Giulia" autocapitalize="words"></label>
@@ -409,7 +436,7 @@
       <div class="form-actions"><button class="btn primary" type="submit">Salva</button></div>
     </form>
 
-    <section class="set-section" aria-labelledby="h-sync" id="sync-section">
+    <section class="card set-section" aria-labelledby="h-sync" id="sync-section">
       <h2 id="h-sync">Sincronizzazione</h2>
       ${sync.conf.code
         ? `<p>Questo telefono è collegato: ogni spesa inserita qui o sull'altro telefono compare subito su entrambi.</p>
@@ -421,23 +448,29 @@
       ${lastSync ? `<p class="small muted" style="margin-top:.75rem">Ultimo aggiornamento ricevuto: ${esc(lastSync)}</p>` : ''}
     </section>
 
-    <section class="set-section" aria-labelledby="h-bk">
+    <section class="card set-section" aria-labelledby="h-share">
+      <h2 id="h-share">Condividi l'app</h2>
+      <p>Mandate la pagina di presentazione a chi sta per sposarsi. Ogni coppia usa il proprio codice: le vostre spese restano solo vostre.</p>
+      <div class="btns"><button type="button" class="btn primary" data-action="share-app">Condividi l'app</button><a class="btn" href="/scopri/">Vedi la presentazione</a></div>
+    </section>
+
+    <section class="card set-section" aria-labelledby="h-bk">
       <h2 id="h-bk">Backup ed esportazione</h2>
       <p>Il backup è un file con tutte le spese: tenetelo nel cloud o mandatelo via mail. Il CSV si apre con Excel o Numbers.</p>
       <div class="btns"><button type="button" class="btn" data-action="backup">Salva backup</button><button type="button" class="btn" data-action="import-file">Importa da file</button><button type="button" class="btn" data-action="export-csv">Esporta CSV</button></div>
     </section>
 
-    <section class="set-section" aria-labelledby="h-cats">
-      <h2 id="h-cats">Categorie</h2>
+    <section class="card set-section" aria-labelledby="h-cats">
+      <h2 id="h-cats">Tipi di spesa</h2>
       <ul class="list" style="margin-top:.75rem">${state.categories.map((c, i) => `<li class="cat-item"><span>${esc(c)}${counts.get(c) ? `<small>${counts.get(c)}</small>` : ''}</span><span class="btns">
         <button type="button" class="icon-btn" data-action="cat-up" data-i="${i}" ${i === 0 ? 'disabled' : ''} aria-label="Sposta su ${esc(c)}">Su</button>
         <button type="button" class="icon-btn" data-action="cat-rename" data-i="${i}" aria-label="Rinomina ${esc(c)}">Rinomina</button>
         <button type="button" class="icon-btn" data-action="cat-del" data-i="${i}" ${counts.get(c) ? 'disabled title="Contiene delle spese"' : ''} aria-label="Elimina ${esc(c)}">Elimina</button>
       </span></li>`).join('')}</ul>
-      <form class="add-cat" data-form="add-cat"><label class="vh" for="newcat">Nuova categoria</label><input id="newcat" name="cat" type="text" placeholder="Nuova categoria" autocomplete="off"><button class="btn small" type="submit">Aggiungi</button></form>
+      <form class="add-cat" data-form="add-cat"><label class="vh" for="newcat">Nuovo tipo di spesa</label><input id="newcat" name="cat" type="text" placeholder="Nuovo tipo di spesa" autocomplete="off"><button class="btn small" type="submit">Aggiungi</button></form>
     </section>
 
-    <section class="set-section" aria-labelledby="h-reset">
+    <section class="card set-section" aria-labelledby="h-reset">
       <h2 id="h-reset">Cancella tutto</h2>
       ${sync.conf.code
         ? '<p>Scollega questo telefono e ne cancella spese e impostazioni. Sull\'altro telefono e sul server i dati restano.</p><div class="btns"><button type="button" class="btn danger" data-action="reset">Scollega e cancella da questo telefono</button></div>'
@@ -1123,6 +1156,12 @@
       commit('Categoria rinominata');
     },
     'cat-del': (el) => { const i = Number(el.dataset.i); state.categories.splice(i, 1); touchCategories(); commit('Categoria eliminata'); },
+    'share-app': async () => {
+      const url = `${location.origin}/scopri/`;
+      const data = { title: 'Spese del matrimonio', text: "Un'app gratuita per tenere in ordine le spese del matrimonio, in due e in tempo reale.", url };
+      if (navigator.share) { try { await navigator.share(data); } catch (e) { /* annullato */ } return; }
+      try { await navigator.clipboard.writeText(url); toast('Link copiato'); } catch (e) { toast(url); }
+    },
     'skip-onboarding': () => { state.meta.onboarded = true; save(); closeSheet(); }
   };
 

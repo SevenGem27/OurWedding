@@ -1,6 +1,6 @@
 /* Service worker: l'app funziona anche senza connessione.
    Quando pubblicate una nuova versione dei file, cambiate VERSION. */
-const VERSION = 'v1.1.0';
+const VERSION = 'v1.2.0';
 const CACHE = `spese-nozze-${VERSION}`;
 const PAGE = './';
 const ASSETS = [
@@ -15,7 +15,10 @@ const ASSETS = [
   './icons/icon-maskable-512.png',
   './icons/apple-touch-icon.png',
   './icons/favicon-32.png',
-  './icons/favicon-64.png'
+  './icons/favicon-64.png',
+  './img/illustrazione.webp',
+  './img/anelli.webp',
+  './img/monete.webp'
 ];
 
 // Alcuni hosting (Cloudflare) reindirizzano /index.html a /: una risposta
@@ -54,7 +57,15 @@ self.addEventListener('fetch', (event) => {
   if (url.origin !== self.location.origin) return;
   if (url.pathname.startsWith('/api/')) return; // la sincronizzazione non passa dalla cache
 
-  const isPage = req.mode === 'navigate';
+  const isPage = req.mode === 'navigate' && (url.pathname === '/' || url.pathname === '/index.html');
+  if (req.mode === 'navigate' && !isPage) {
+    // altre pagine (es. /scopri/): dalla rete, con la copia salvata se manca la connessione
+    event.respondWith(fetch(req).then(async (res) => {
+      if (res.ok) { const c = await caches.open(CACHE); await c.put(req, await cleanResponse(res.clone())); }
+      return res;
+    }).catch(async () => (await caches.match(req)) || Response.redirect('/', 302)));
+    return;
+  }
   const key = isPage ? PAGE : req;
 
   event.respondWith((async () => {
