@@ -92,7 +92,12 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; background: var(--paper); }
+html {
+  -webkit-text-size-adjust: 100%;
+  background: var(--paper);
+  /* niente zoom con pizzico o doppio tocco: restano solo gli scorrimenti */
+  touch-action: pan-x pan-y;
+}
 body {
   margin: 0;
   min-height: 100dvh;

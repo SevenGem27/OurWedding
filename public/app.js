@@ -10,7 +10,7 @@
   const KEY = 'spese-nozze:v1';
   const SYNC_KEY = 'spese-nozze:sync';
   const APP_ID = 'spese-nozze';
-  const VERSION = '1.2.0';
+  const VERSION = '1.2.1';
 
   const DEFAULT_CATEGORIES = [
     'Location e ricevimento', 'Catering', 'Chiesa o Comune', 'Abito sposa', 'Abito sposo',
@@ -1355,6 +1355,11 @@
   checkPairLink();
   window.addEventListener('hashchange', checkPairLink);
   connect();
+
+  // Safari su iPhone ignora user-scalable=no: si bloccano i suoi gesti di zoom
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach((t) => document.addEventListener(t, (e) => e.preventDefault(), { passive: false }));
+  // e il pizzico a due dita, dove il browser lo consente
+  document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
 
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator && location.protocol !== 'file:') {
