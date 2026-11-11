@@ -1,6 +1,6 @@
 /* Service worker: l'app funziona anche senza connessione.
    Quando pubblicate una nuova versione dei file, cambiate VERSION. */
-const VERSION = 'v1.2.1';
+const VERSION = 'v1.3.0';
 const CACHE = `spese-nozze-${VERSION}`;
 const PAGE = './';
 const ASSETS = [

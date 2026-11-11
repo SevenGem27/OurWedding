@@ -43,6 +43,23 @@ L'app usa un Worker e un Durable Object con archivio SQLite, entrambi inclusi ne
 Sul piano gratuito non ci sono addebiti: se un limite venisse superato, la sincronizzazione si
 fermerebbe fino alla mezzanotte UTC e l'app continuerebbe a funzionare in locale.
 
+## Invitati
+
+Nella scheda **Invitati** la lista è organizzata per nuclei (una famiglia, una coppia, una persona sola):
+a ogni nucleo va una partecipazione e, di solito, una bomboniera.
+
+- **Incolla un elenco**: un nucleo per riga, persone separate da virgola o «e», `(b)` per i bambini e `(n)` per i neonati,
+  il nome del nucleo prima dei due punti (`Famiglia Rossi: Mario, Anna, Luca (b)`).
+- Nella scheda di un nucleo si segna la consegna della partecipazione (a mano, per posta, digitale) e, persona per persona,
+  chi viene (Sì / ? / No).
+- Le **bomboniere da comprare** si contano da sole: quelle dei nuclei in cui qualcuno viene, quelle dei nuclei in attesa di
+  risposta e quelle di scorta. I nuclei che non vengono non si contano.
+- Il riepilogo indica anche adulti, bambini e neonati confermati, utile per il catering, e quante partecipazioni avanzano
+  rispetto a quelle ordinate.
+- **Esporta CSV** crea la lista completa per Excel o Numbers.
+
+La lista si sincronizza tra i telefoni collegati come le spese.
+
 ## Backup
 
 *Impostazioni*, poi **Salva backup**: un file `.json` da tenere su iCloud, Google Drive o in una mail.

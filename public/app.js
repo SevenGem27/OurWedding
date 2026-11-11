@@ -10,7 +10,7 @@
   const KEY = 'spese-nozze:v1';
   const SYNC_KEY = 'spese-nozze:sync';
   const APP_ID = 'spese-nozze';
-  const VERSION = '1.2.1';
+  const VERSION = '1.3.0';
 
   const DEFAULT_CATEGORIES = [
     'Location e ricevimento', 'Catering', 'Chiesa o Comune', 'Abito sposa', 'Abito sposo',
@@ -68,6 +68,8 @@
       categories: [...DEFAULT_CATEGORIES],
       catU: 0,
       items: [],
+      guests: [],
+      gcfg: { spare: 0, ordered: 0, updatedAt: 0 },
       meta: { onboarded: false, lastBackup: 0, lastSync: 0 }
     };
   }
@@ -86,6 +88,20 @@
       createdAt: toInt(i.createdAt) || now(), updatedAt: toInt(i.updatedAt), deleted: !!i.deleted, sample: !!i.sample
     };
   }
+  function normMember(m) {
+    return { id: m.id || uid(), name: String(m.name || '').trim(), kind: ['adulto', 'bambino', 'neonato'].includes(m.kind) ? m.kind : 'adulto', rsvp: m.rsvp === 'si' || m.rsvp === 'no' ? m.rsvp : '' };
+  }
+  function normGuest(g) {
+    const inv = g.invite || {};
+    return {
+      id: g.id || uid(), name: String(g.name || '').trim(), side: g.side === 'a' || g.side === 'b' ? g.side : '',
+      members: Array.isArray(g.members) ? g.members.map(normMember).filter((m) => m.name) : [],
+      invite: { delivered: !!inv.delivered, date: validISO(inv.date) ? inv.date : '', how: String(inv.how || '') },
+      favors: Math.max(0, Math.min(99, g.favors == null ? 1 : toInt(g.favors))), notes: String(g.notes || ''),
+      createdAt: toInt(g.createdAt) || now(), updatedAt: toInt(g.updatedAt), deleted: !!g.deleted, sample: !!g.sample
+    };
+  }
+  const normGcfg = (c) => ({ spare: Math.max(0, toInt((c || {}).spare)), ordered: Math.max(0, toInt((c || {}).ordered)), updatedAt: toInt((c || {}).updatedAt) });
   function normalize(s) {
     const b = blank();
     s = s && typeof s === 'object' ? s : {};
@@ -98,6 +114,8 @@
       categories: Array.isArray(s.categories) && s.categories.length ? s.categories.map(String) : b.categories,
       catU: Math.max(0, toInt(s.catU)),
       items: Array.isArray(s.items) ? s.items.map(normItem) : [],
+      guests: Array.isArray(s.guests) ? s.guests.map(normGuest) : [],
+      gcfg: normGcfg(s.gcfg),
       meta: { ...b.meta, ...(s.meta || {}) }
     };
   }
@@ -120,9 +138,9 @@
   const touchCategories = () => { state.catU = Math.max(now(), (state.catU || 0) + 1); };
 
   let state = load();
-  const ui = { tab: 'home', filter: 'all', q: '', cat: '' };
+  const ui = { tab: 'home', filter: 'all', q: '', cat: '', gfilter: 'all', gq: '', gside: 'a' };
   try { const t = sessionStorage.getItem('spese-nozze:tab'); if (t) ui.tab = t; } catch (e) { /* niente */ }
-  { const t = new URLSearchParams(location.search).get('tab'); if (['home', 'items', 'due', 'settings'].includes(t)) ui.tab = t; }
+  { const t = new URLSearchParams(location.search).get('tab'); if (['home', 'items', 'due', 'guests', 'settings'].includes(t)) ui.tab = t; }
 
   const live = () => state.items.filter((i) => !i.deleted);
   const findItem = (id) => state.items.find((i) => i.id === id && !i.deleted);
@@ -175,11 +193,11 @@
   const ICON_X = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
 
   /** Barra segmentata: pagato | da pagare | (budget libero) */
-  function bar({ paid, toPay, free = 0, budgetMark = null, thin = false, label = '' }) {
+  function bar({ paid, toPay, free = 0, budgetMark = null, thin = false, label = '', noPct = false }) {
     const whole = paid + toPay + free;
     if (whole <= 0) return `<div class="bar${thin ? ' thin' : ''}" role="img" aria-label="Nessun importo"><span class="seg free" style="flex:1"></span></div>`;
     const seg = (cls, v, inner = '') => (v > 0 ? `<span class="seg ${cls}" style="flex:${v} 1 0">${inner}</span>` : '');
-    const showPct = !thin && paid / whole > 0.14;
+    const showPct = !thin && !noPct && paid / whole > 0.14;
     const inner = showPct ? `<span class="in">${pct(paid, paid + toPay)}%</span>` : '';
     const mark = budgetMark != null ? `<span class="budget-mark" style="left:calc(${(budgetMark * 100).toFixed(2)}% - 1px)" aria-hidden="true"></span>` : '';
     return `<div class="bar${thin ? ' thin' : ''}" role="img" aria-label="${esc(label || `Pagato ${money(paid)}, da pagare ${money(toPay)}`)}">${seg('paid', paid, inner)}${seg('topay', toPay)}${seg('free', free)}${mark}</div>`;
@@ -254,6 +272,16 @@
     </button></li>`;
   }
 
+  function guestsHomeCard() {
+    if (!liveGuests().length) return '';
+    const gs = guestStats();
+    return `<section class="card" aria-labelledby="h-ginv"><div class="card-head"><h2 id="h-ginv">Invitati</h2><button type="button" class="link" data-action="tab" data-tab="guests">Apri la lista</button></div>
+        ${bar({ paid: gs.yes, toPay: gs.wait, free: gs.no, noPct: true, thin: true, label: `${gs.yes} confermati, ${gs.wait} in attesa, ${gs.no} non vengono` })}
+        <p class="g-home"><span><strong>${gs.yes}</strong> confermati su ${gs.people}</span><span><strong>${gs.wait}</strong> in attesa</span></p>
+        <p class="g-home muted"><span>Partecipazioni consegnate ${gs.delivered} su ${gs.households}</span><span>Bomboniere ${gs.favors}</span></p>
+      </section>`;
+  }
+
   function viewHome() {
     const s = state.settings;
     const names = [s.name1, s.name2].map((x) => x.trim()).filter(Boolean);
@@ -266,7 +294,7 @@
     }
 
     if (!t.count) {
-      return h + emptyArt('Iniziate dalla prima spesa',
+      return h + guestsHomeCard() + emptyArt('Iniziate dalla prima spesa',
         "Inserite un fornitore con l'importo concordato e l'acconto già versato. L'app calcola quanto avete pagato, quanto resta e quando scade ogni rata.",
         '<button type="button" class="btn primary" data-action="new-item">Aggiungi spesa</button><button type="button" class="btn" data-action="load-sample">Vedi un esempio</button>');
     }
@@ -314,6 +342,8 @@
       h += `<div class="callout"><p><strong>${money(t.unscheduled)}</strong> da pagare ${n === 1 ? 'non ha' : 'non hanno'} ancora una data (${n} ${n === 1 ? 'spesa' : 'spese'}).</p><button type="button" class="link" data-action="tab" data-tab="due">Programma i saldi</button></div>`;
     }
     h += '</section>';
+
+    h += guestsHomeCard();
 
     // per tipo di spesa
     const cats = [...t.byCat.values()].sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
@@ -479,16 +509,243 @@
     <p class="foot">Spese del matrimonio, versione ${VERSION}. Funziona anche offline.</p>`;
   }
 
+  /* ---------------- invitati ----------------
+     Un "nucleo" riceve una partecipazione e, di solito, una bomboniera.
+     Ogni persona del nucleo ha la sua risposta: sì, no o in attesa (''). */
+  const KINDS = { adulto: 'Adulto', bambino: 'Bambino', neonato: 'Neonato' };
+  const HOW = ['A mano', 'Per posta', 'Digitale'];
+  const ICON_ENVELOPE = '<svg class="stat-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="5" y="11" width="38" height="28" rx="6" fill="#FFF8F2" stroke="#5A3B2E" stroke-width="2.5"/><path d="M7 14l17 13 17-13" fill="none" stroke="#5A3B2E" stroke-width="2.5" stroke-linejoin="round"/><circle cx="24" cy="27" r="5" fill="#6B8F6E" stroke="#5A3B2E" stroke-width="2"/></svg>';
+  const ICON_GIFT = '<svg class="stat-icon" viewBox="0 0 48 48" aria-hidden="true"><rect x="8" y="20" width="32" height="22" rx="4" fill="#FFF8F2" stroke="#5A3B2E" stroke-width="2.5"/><rect x="5" y="14" width="38" height="8" rx="3" fill="#EFA8A0" stroke="#5A3B2E" stroke-width="2.5"/><path d="M24 14v28" stroke="#5A3B2E" stroke-width="2.5"/><path d="M24 14c-3-6-11-7-11-2 0 3 6 2 11 2zm0 0c3-6 11-7 11-2 0 3-6 2-11 2z" fill="#D49A35" stroke="#5A3B2E" stroke-width="2.2" stroke-linejoin="round"/></svg>';
+
+  const liveGuests = () => state.guests.filter((g) => !g.deleted);
+  const findGuest = (id) => state.guests.find((g) => g.id === id && !g.deleted);
+  const touchGcfg = () => { state.gcfg.updatedAt = Math.max(now(), (state.gcfg.updatedAt || 0) + 1); };
+  const sideLabel = (side) => {
+    const s = state.settings;
+    if (side === 'a') return `Lato ${s.name1 || 'sposa'}`;
+    if (side === 'b') return `Lato ${s.name2 || 'sposo'}`;
+    return 'Di entrambi';
+  };
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+
+  function householdStats(g) {
+    let yes = 0, no = 0, wait = 0;
+    for (const m of g.members) { if (m.rsvp === 'si') yes++; else if (m.rsvp === 'no') no++; else wait++; }
+    const allNo = g.members.length > 0 && no === g.members.length;
+    return { yes, no, wait, n: g.members.length, allNo };
+  }
+  function guestStats() {
+    const s = { households: 0, people: 0, yes: 0, no: 0, wait: 0, delivered: 0,
+      yesBy: { adulto: 0, bambino: 0, neonato: 0 }, favorsYes: 0, favorsWait: 0, spare: state.gcfg.spare || 0 };
+    for (const g of liveGuests()) {
+      s.households++;
+      if (g.invite.delivered) s.delivered++;
+      const h = householdStats(g);
+      s.people += h.n; s.yes += h.yes; s.no += h.no; s.wait += h.wait;
+      for (const m of g.members) if (m.rsvp === 'si') s.yesBy[m.kind] = (s.yesBy[m.kind] || 0) + 1;
+      if (!h.allNo) { if (h.yes > 0) s.favorsYes += g.favors; else s.favorsWait += g.favors; }
+    }
+    s.favors = s.favorsYes + s.favorsWait + s.spare;
+    return s;
+  }
+  function membersSummary(g) {
+    const h = householdStats(g);
+    if (!h.n) return 'Nessuna persona';
+    if (h.allNo) return h.n === 1 ? 'Non viene' : 'Non vengono';
+    if (h.yes === h.n) return h.n === 1 ? 'Viene' : `${h.n} persone, vengono tutti`;
+    if (h.wait === h.n) return `${plural(h.n, 'persona', 'persone')}, in attesa di risposta`;
+    return [h.yes ? `${h.yes} sì` : '', h.wait ? `${h.wait} in attesa` : '', h.no ? `${h.no} no` : ''].filter(Boolean).join(', ');
+  }
+
+  function guestRow(g) {
+    const fav = householdStats(g).allNo ? '' : plural(g.favors, 'bomboniera', 'bomboniere');
+    return `<li><button type="button" class="row" data-action="open-guest" data-id="${g.id}">
+      <span class="row-top"><span class="row-name">${esc(g.name)}</span>${g.invite.delivered ? `<span class="g-badge ok">${ICON_CHECK}Consegnata</span>` : '<span class="g-badge todo">Da consegnare</span>'}</span>
+      <span class="row-meta"><span>${esc(membersSummary(g))}</span><span>${fav}</span></span>
+    </button></li>`;
+  }
+
+  function viewGuests() {
+    const s = guestStats();
+    let h = pageHead('Invitati', s.households ? `${plural(s.people, 'persona', 'persone')} in ${plural(s.households, 'nucleo', 'nuclei')}` : '');
+    if (!s.households) {
+      return h + emptyArt('La lista degli invitati',
+        'Aggiungete i nuclei familiari: a ogni nucleo va una partecipazione. Per ogni persona segnerete se viene, e l\'app conta da sola le bomboniere da comprare.',
+        '<button type="button" class="btn primary" data-action="new-guest">Aggiungi un nucleo</button><button type="button" class="btn" data-action="guest-bulk">Incolla un elenco</button>');
+    }
+    const pctYes = pct(s.yes, s.people);
+    h += `<section class="card hero" aria-labelledby="h-gyes">
+      <div class="hero-fig"><h2 class="hero-label" id="h-gyes">Confermati</h2><p class="big">${s.yes}<span class="of">su ${s.people}</span></p></div>
+      ${bar({ paid: s.yes, toPay: s.wait, free: s.no, noPct: true, label: `${s.yes} confermati, ${s.wait} in attesa, ${s.no} non vengono` })}
+      <p class="g-legend"><span><i class="sw paid"></i>Vengono <strong>${s.yes}</strong></span><span><i class="sw topay"></i>In attesa <strong>${s.wait}</strong></span><span><i class="sw free"></i>Non vengono <strong>${s.no}</strong></span></p>
+      ${s.yes ? `<p class="budget-line">Per il catering: ${[plural(s.yesBy.adulto, 'adulto', 'adulti'), s.yesBy.bambino ? plural(s.yesBy.bambino, 'bambino', 'bambini') : '', s.yesBy.neonato ? plural(s.yesBy.neonato, 'neonato', 'neonati') : ''].filter(Boolean).join(', ')} confermati (${pctYes}% degli invitati)</p>` : ''}
+    </section>
+    <div class="duo">
+      <section class="card stat" aria-labelledby="h-inv">
+        ${ICON_ENVELOPE}
+        <h2 class="stat-label" id="h-inv">Partecipazioni consegnate</h2>
+        <p class="stat-val">${s.delivered}<span class="of"> su ${s.households}</span></p>
+        <p class="stat-sub">${state.gcfg.ordered ? (state.gcfg.ordered >= s.households ? `Ordinate ${state.gcfg.ordered}, ne avanzano ${state.gcfg.ordered - s.households}` : `Ordinate ${state.gcfg.ordered}, ne mancano ${s.households - state.gcfg.ordered}`) : 'Una per nucleo'}</p>
+      </section>
+      <section class="card stat" aria-labelledby="h-fav">
+        ${ICON_GIFT}
+        <h2 class="stat-label" id="h-fav">Bomboniere da comprare</h2>
+        <p class="stat-val">${s.favors}</p>
+        <p class="stat-sub">${[`${s.favorsYes} per chi viene`, s.favorsWait ? `${s.favorsWait} in attesa` : '', s.spare ? `${s.spare} di scorta` : ''].filter(Boolean).join(', ')}</p>
+      </section>
+    </div>`;
+    h += `<label class="vh" for="gq">Cerca un invitato</label><input id="gq" class="search" type="search" placeholder="Cerca nome o nucleo" value="${esc(ui.gq)}" autocomplete="off" enterkeyhint="search">`;
+    const chip = (k, l) => `<button type="button" class="chip" data-action="gfilter" data-f="${k}" aria-pressed="${ui.gfilter === k}">${l}</button>`;
+    h += `<div class="chips" role="group" aria-label="Filtra">${chip('all', 'Tutti')}${chip('todo', 'Da consegnare')}${chip('wait', 'In attesa')}${chip('yes', 'Vengono')}${chip('no', 'Non vengono')}</div>`;
+    h += `<div id="guests-list">${guestsList()}</div>`;
+    h += `<section class="card set-section" aria-labelledby="h-gcfg">
+      <h2 id="h-gcfg">Bomboniere e partecipazioni</h2>
+      <div class="g-cfg-row"><span>Bomboniere di scorta</span><span class="stepper"><button type="button" data-action="gspare" data-d="-1" aria-label="Una in meno">−</button><output aria-live="polite">${s.spare}</output><button type="button" data-action="gspare" data-d="1" aria-label="Una in più">+</button></span></div>
+      <form data-form="gcfg" class="g-cfg-row" novalidate><label for="gordered">Partecipazioni ordinate</label><span class="g-inline"><input id="gordered" name="ordered" type="text" inputmode="numeric" value="${state.gcfg.ordered || ''}" placeholder="0"><button class="btn small" type="submit">Salva</button></span></form>
+      <div class="btns"><button type="button" class="btn" data-action="guest-bulk">Incolla un elenco</button><button type="button" class="btn" data-action="export-guests-csv">Esporta CSV</button></div>
+    </section>`;
+    return h;
+  }
+  function guestsList() {
+    const q = ui.gq.trim().toLowerCase();
+    const list = liveGuests().filter((g) => {
+      const h = householdStats(g);
+      if (ui.gfilter === 'todo' && g.invite.delivered) return false;
+      if (ui.gfilter === 'wait' && !h.wait) return false;
+      if (ui.gfilter === 'yes' && !h.yes) return false;
+      if (ui.gfilter === 'no' && !h.no) return false;
+      if (q && !(`${g.name} ${g.members.map((m) => m.name).join(' ')} ${g.notes}`.toLowerCase().includes(q))) return false;
+      return true;
+    });
+    if (!list.length) return '<p class="muted filter-note">Nessun invitato corrisponde a questi filtri.</p>';
+    let h = '';
+    for (const side of ['a', 'b', '']) {
+      const group = list.filter((g) => (g.side || '') === side).sort((x, y) => x.name.localeCompare(y.name, 'it'));
+      if (!group.length) continue;
+      const people = group.reduce((a, g) => a + g.members.length, 0);
+      h += `<section class="card"><div class="card-head"><h2>${esc(sideLabel(side))}</h2><span class="muted small">${plural(people, 'persona', 'persone')}</span></div><ul class="list">${group.map(guestRow).join('')}</ul></section>`;
+    }
+    return h;
+  }
+
+  /* scheda del nucleo: risposte, consegna, bomboniere */
+  function openGuest(id, opts = {}) {
+    const g = findGuest(id);
+    if (!g) { closeSheet(); return; }
+    const h = householdStats(g);
+    const inv = g.invite.delivered
+      ? `<p><strong>${ICON_CHECK} Partecipazione consegnata</strong>${g.invite.date ? ` il ${esc(fmtDate(g.invite.date))}` : ''}${g.invite.how ? ` (${esc(g.invite.how.toLowerCase())})` : ''}</p>
+         <button type="button" class="link" data-action="undeliver" data-g="${g.id}">Non è ancora stata consegnata</button>`
+      : `<p><strong>Partecipazione da consegnare.</strong> Segnatela come consegnata:</p>
+         <div class="deliver-btns">${HOW.map((w) => `<button type="button" class="btn small${w === 'A mano' ? ' primary' : ''}" data-action="deliver" data-g="${g.id}" data-how="${w}">${w}</button>`).join('')}</div>`;
+    const rsvpBtns = (m) => [['si', 'Sì'], ['', '?'], ['no', 'No']].map(([v, l]) =>
+      `<button type="button" data-action="rsvp" data-g="${g.id}" data-m="${m.id}" data-v="${v}" aria-pressed="${m.rsvp === v}" aria-label="${esc(m.name)}: ${v === 'si' ? 'viene' : v === 'no' ? 'non viene' : 'in attesa'}">${l}</button>`).join('');
+    const html = `${head(g.name, sideLabel(g.side), `<button type="button" class="btn small" data-action="edit-guest" data-id="${g.id}">Modifica</button>`)}
+      <div class="g-block">${inv}</div>
+      <div class="card-head g-sub"><h3 class="subhead">Chi viene</h3>${h.n > 1 ? `<span class="btns"><button type="button" class="icon-btn" data-action="rsvp-all" data-g="${g.id}" data-v="si">Tutti sì</button><button type="button" class="icon-btn" data-action="rsvp-all" data-g="${g.id}" data-v="no">Tutti no</button></span>` : ''}</div>
+      <ul class="list members">${g.members.map((m) => `<li class="m"><span class="m-name">${esc(m.name)}${m.kind !== 'adulto' ? ` <span class="tag">${KINDS[m.kind].toLowerCase()}</span>` : ''}</span><span class="rsvp" role="group" aria-label="Risposta di ${esc(m.name)}">${rsvpBtns(m)}</span></li>`).join('')}</ul>
+      <div class="card-head g-sub"><h3 class="subhead">Bomboniere</h3>
+        <span class="stepper"><button type="button" data-action="gfavors" data-g="${g.id}" data-d="-1" aria-label="Una bomboniera in meno">−</button><output aria-live="polite">${g.favors}</output><button type="button" data-action="gfavors" data-g="${g.id}" data-d="1" aria-label="Una bomboniera in più">+</button></span></div>
+      <p class="small muted">${h.allNo ? 'Il nucleo non viene: le sue bomboniere non sono conteggiate.' : 'Di solito una per nucleo. Si contano se almeno una persona viene o se la risposta è ancora in attesa.'}</p>
+      ${g.notes ? `<div class="detail-notes"><p>${esc(g.notes)}</p></div>` : ''}`;
+    openSheet(html, { refresh: () => openGuest(id, { focus: false }), focus: opts.focus !== false });
+  }
+
+  const memberRow = (m = {}) => `<div class="m-row">
+      <input type="hidden" name="m_id" value="${esc(m.id || '')}"><input type="hidden" name="m_rsvp" value="${esc(m.rsvp || '')}">
+      <label class="vh">Nome</label><input type="text" name="m_name" value="${esc(m.name || '')}" placeholder="Nome e cognome" autocapitalize="words">
+      <label class="vh">Età</label><select name="m_kind">${Object.entries(KINDS).map(([k, l]) => `<option value="${k}" ${k === (m.kind || 'adulto') ? 'selected' : ''}>${l}</option>`).join('')}</select>
+      <button type="button" class="x" data-action="remove-member-row" aria-label="Togli questa persona">${ICON_X}</button>
+    </div>`;
+  const sidePicker = (cur) => `<fieldset class="field"><legend>Di chi sono invitati</legend><div class="seg-ctl">
+      ${[['a', state.settings.name1 || 'Sposa'], ['b', state.settings.name2 || 'Sposo'], ['', 'Entrambi']].map(([v, l]) => `<label><input type="radio" name="side" value="${v}" ${v === (cur || '') ? 'checked' : ''}><span>${esc(l)}</span></label>`).join('')}
+    </div></fieldset>`;
+
+  function openGuestForm(id) {
+    const g = id ? findGuest(id) : null;
+    const members = g ? g.members : [{}];
+    openSheet(`${head(g ? 'Modifica nucleo' : 'Nuovo nucleo')}
+      <form data-form="guest" data-id="${g ? g.id : ''}" novalidate autocomplete="off">
+        <label class="field"><span>Nome del nucleo</span><input type="text" name="name" value="${esc(g ? g.name : '')}" placeholder="Es. Famiglia Rossi, Zia Tina e zio Mario" autocapitalize="words" ${g ? '' : 'autofocus'}><span class="hint">Se lo lasciate vuoto, uso i nomi delle persone.</span></label>
+        ${sidePicker(g ? g.side : ui.gside)}
+        <fieldset class="field"><legend>Persone</legend><div id="m-rows">${members.map(memberRow).join('')}</div>
+          <button type="button" class="link fill-btn" data-action="add-member-row">Aggiungi una persona</button>
+          <span class="hint">Bambini e neonati si contano a parte per il catering.</span></fieldset>
+        <label class="field"><span>Bomboniere per questo nucleo</span><input type="text" name="favors" inputmode="numeric" value="${g ? g.favors : 1}"></label>
+        <label class="field"><span>Note</span><textarea name="notes" placeholder="Indirizzo, intolleranze, chi consegna la partecipazione…">${esc(g ? g.notes : '')}</textarea></label>
+        <div class="form-actions"><button class="btn primary" type="submit">${g ? 'Salva modifiche' : 'Aggiungi nucleo'}</button>${g ? `<button class="btn danger" type="button" data-action="del-guest" data-id="${g.id}">Elimina</button>` : ''}</div>
+      </form>`);
+  }
+
+  function openGuestBulk() {
+    openSheet(`${head('Incolla un elenco')}
+      <form data-form="guestBulk" novalidate autocomplete="off">
+        <label class="field"><span>Un nucleo per riga</span><textarea name="list" rows="9" placeholder="Famiglia Rossi: Mario, Anna, Luca (b)&#10;Zia Tina e zio Mario&#10;Giulia Bianchi" autofocus></textarea>
+          <span class="hint">Separate le persone con una virgola o con «e». Scrivete (b) dopo i bambini e (n) dopo i neonati. Per dare un nome al nucleo scrivetelo prima dei due punti.</span></label>
+        ${sidePicker(ui.gside)}
+        <div class="form-actions"><button class="btn primary" type="submit">Aggiungi alla lista</button></div>
+      </form>`);
+  }
+  function parseGuestLines(text) {
+    return String(text || '').split(/\n+/).map((l) => l.trim().replace(/^[-•*\d.)\s]+/, '').trim()).filter(Boolean).map((line) => {
+      let name = '', rest = line;
+      const i = line.indexOf(':');
+      if (i > 0) { name = line.slice(0, i).trim(); rest = line.slice(i + 1); }
+      const members = rest.split(/,|;|\s+e\s+|\s+\+\s+/i).map((x) => x.trim()).filter(Boolean).map((p) => {
+        let kind = 'adulto';
+        const m = p.match(/\(\s*(b|bimb[oa]|bambin[oa]|n|neonat[oa])\s*\)\s*$/i);
+        if (m) { kind = /^n/i.test(m[1]) ? 'neonato' : 'bambino'; p = p.slice(0, m.index).trim(); }
+        return { id: uid(), name: p, kind, rsvp: '' };
+      });
+      if (!name) name = rest.replace(/\(\s*(b|bimb[oa]|bambin[oa]|n|neonat[oa])\s*\)/gi, '').replace(/\s+/g, ' ').trim();
+      return { name, members };
+    }).filter((x) => x.members.length);
+  }
+
+  function csvGuests() {
+    const q = (v) => { const s = String(v ?? ''); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const rows = [['Nucleo', 'Lato', 'Persona', 'Età', 'Risposta', 'Partecipazione', 'Consegnata il', 'Come', 'Bomboniere', 'Note']];
+    const list = liveGuests().sort((a, b) => (a.side || 'z').localeCompare(b.side || 'z') || a.name.localeCompare(b.name, 'it'));
+    for (const g of list) {
+      g.members.forEach((m, i) => rows.push([
+        g.name, sideLabel(g.side), m.name, KINDS[m.kind], m.rsvp === 'si' ? 'Viene' : m.rsvp === 'no' ? 'Non viene' : 'In attesa',
+        g.invite.delivered ? 'Consegnata' : 'Da consegnare', g.invite.date ? fmtDate(g.invite.date, { day: '2-digit', month: '2-digit', year: 'numeric' }) : '', g.invite.how,
+        i === 0 ? (householdStats(g).allNo ? 0 : g.favors) : '', i === 0 ? g.notes : ''
+      ]));
+    }
+    const s = guestStats();
+    rows.push([]);
+    rows.push(['Totale', '', `${s.people} persone`, '', `${s.yes} vengono, ${s.wait} in attesa, ${s.no} no`, `${s.delivered} consegnate su ${s.households}`, '', '', s.favors]);
+    return '﻿' + rows.map((r) => r.map(q).join(';')).join('\r\n');
+  }
+
+  function sampleGuests() {
+    const d = (n) => addDays(todayISO(), n);
+    const G = (name, side, members, extra = {}) => normGuest({ name, side, members: members.map(([n, kind = 'adulto', rsvp = '']) => ({ name: n, kind, rsvp })), sample: true, updatedAt: now(), ...extra });
+    return [
+      G('Famiglia Rossi', 'a', [['Mario Rossi', 'adulto', 'si'], ['Anna Rossi', 'adulto', 'si'], ['Luca', 'bambino', 'si']], { invite: { delivered: true, date: d(-20), how: 'A mano' } }),
+      G('Zia Tina e zio Piero', 'a', [['Tina'], ['Piero']], { invite: { delivered: true, date: d(-12), how: 'Per posta' } }),
+      G('Nonna Elena', 'a', [['Elena', 'adulto', 'si']], { invite: { delivered: true, date: d(-30), how: 'A mano' } }),
+      G('Paolo e Sara', 'b', [['Paolo', 'adulto', 'si'], ['Sara', 'adulto', 'no']], { invite: { delivered: true, date: d(-8), how: 'Digitale' } }),
+      G('Famiglia Bianchi', 'b', [['Giorgio Bianchi'], ['Laura Bianchi'], ['Emma', 'neonato']]),
+      G('Colleghi di lavoro', '', [['Marco'], ['Chiara'], ['Davide', 'adulto', 'no']], { favors: 3 })
+    ];
+  }
+
   /* ---------------- rendering ---------------- */
   const view = $('#view');
   function render({ keepScroll = true } = {}) {
     const y = window.scrollY;
-    const html = ui.tab === 'items' ? viewItems() : ui.tab === 'due' ? viewDue() : ui.tab === 'settings' ? viewSettings() : viewHome();
+    const html = ui.tab === 'items' ? viewItems() : ui.tab === 'due' ? viewDue() : ui.tab === 'guests' ? viewGuests() : ui.tab === 'settings' ? viewSettings() : viewHome();
     view.innerHTML = html;
     document.querySelectorAll('.tabs button').forEach((b) => {
       if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current');
     });
-    $('#fab').hidden = ui.tab === 'settings' || (ui.tab === 'home' && !live().length);
+    const fab = $('#fab');
+    const onGuests = ui.tab === 'guests';
+    fab.dataset.action = onGuests ? 'new-guest' : 'new-item';
+    $('#fab-label').textContent = onGuests ? 'Aggiungi invitati' : 'Aggiungi spesa';
+    fab.hidden = ui.tab === 'settings' || (ui.tab === 'home' && !live().length) || (onGuests && !liveGuests().length);
     if (keepScroll) window.scrollTo(0, y);
   }
   function go(tab) {
@@ -671,7 +928,7 @@
 
   /* ---------------- backup e import ---------------- */
   function payload() {
-    return { app: APP_ID, v: 1, exportedAt: now(), settings: state.settings, categories: state.categories, catU: state.catU, items: state.items.filter((i) => !i.sample && !i.deleted) };
+    return { app: APP_ID, v: 1, exportedAt: now(), settings: state.settings, categories: state.categories, catU: state.catU, items: state.items.filter((i) => !i.sample && !i.deleted), guests: state.guests.filter((g) => !g.sample && !g.deleted), gcfg: state.gcfg };
   }
   const b64u = {
     enc(bytes) { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); },
@@ -685,8 +942,9 @@
   }
   function describeIncoming(inc) {
     const n = inc.items.filter((i) => !i.deleted).length;
+    const gn = inc.guests.filter((g) => !g.deleted).length;
     const names = [inc.settings.name1, inc.settings.name2].filter(Boolean).join(' e ');
-    return `${n} ${n === 1 ? 'spesa' : 'spese'}${names ? ` di ${names}` : ''}`;
+    return `${n} ${n === 1 ? 'spesa' : 'spese'}${gn ? ` e ${gn} ${gn === 1 ? 'nucleo' : 'nuclei'} di invitati` : ''}${names ? ` di ${names}` : ''}`;
   }
   function mergeIncoming(inc) {
     let added = 0, updated = 0, removed = 0;
@@ -706,6 +964,15 @@
     const before = state.categories.length;
     for (const c of inc.categories) if (!state.categories.includes(c)) state.categories.push(c);
     if (state.categories.length !== before) touchCategories();
+    state.guests = state.guests.filter((g) => !g.sample);
+    const gmap = new Map(state.guests.map((g) => [g.id, g]));
+    for (const g of inc.guests) {
+      const cur = gmap.get(g.id);
+      if (!cur) { gmap.set(g.id, g); if (!g.deleted) added++; continue; }
+      if ((g.updatedAt || 0) > (cur.updatedAt || 0)) { if (!g.deleted) updated++; gmap.set(g.id, g); }
+    }
+    state.guests = [...gmap.values()];
+    if ((inc.gcfg.updatedAt || 0) > (state.gcfg.updatedAt || 0)) state.gcfg = inc.gcfg;
     return { added, updated, removed };
   }
   /** Sostituisce i dati con quelli importati. Le nuove versioni devono "vincere"
@@ -715,7 +982,10 @@
     const keep = new Set(inc.items.map((i) => i.id));
     const tombs = state.items.filter((i) => !i.sample && !i.deleted && !keep.has(i.id)).map((i) => normItem({ id: i.id, deleted: true, updatedAt: t }));
     inc.items.forEach((i) => { i.updatedAt = t; });
-    state = { ...inc, items: [...inc.items, ...tombs], settings: { ...inc.settings, updatedAt: t }, catU: t, meta: { ...state.meta, onboarded: true } };
+    const gkeep = new Set(inc.guests.map((g) => g.id));
+    const gtombs = state.guests.filter((g) => !g.sample && !g.deleted && !gkeep.has(g.id)).map((g) => normGuest({ id: g.id, deleted: true, updatedAt: t }));
+    inc.guests.forEach((g) => { g.updatedAt = t; });
+    state = { ...inc, items: [...inc.items, ...tombs], guests: [...inc.guests, ...gtombs], gcfg: { ...inc.gcfg, updatedAt: t }, settings: { ...inc.settings, updatedAt: t }, catU: t, meta: { ...state.meta, onboarded: true } };
   }
   function openIncoming(inc, source) {
     const html = `${head('Dati da importare', source)}
@@ -782,6 +1052,12 @@
     }
     if (state.settings.updatedAt) out.push({ id: '_settings', u: state.settings.updatedAt, d: false, obj: state.settings });
     if (state.catU) out.push({ id: '_categories', u: state.catU, d: false, obj: state.categories });
+    for (const g of state.guests) {
+      if (g.sample) continue;
+      const { sample, ...data } = g;
+      out.push({ id: g.id, u: g.updatedAt || 0, d: g.deleted, k: 'g', obj: g.deleted ? { id: g.id, deleted: true } : data });
+    }
+    if (state.gcfg.updatedAt) out.push({ id: '_guestcfg', u: state.gcfg.updatedAt, d: false, k: 'g', obj: state.gcfg });
     return out;
   }
   const pending = () => localRecords().filter((r) => r.u > (sync.conf.pushed[r.id] || 0) && r.u > (sync.inflight[r.id] || 0));
@@ -799,7 +1075,7 @@
     for (let i = 0; i < recs.length; i += 100) {
       const chunk = recs.slice(i, i + 100);
       chunk.forEach((r) => { sync.inflight[r.id] = r.u; });
-      const records = await Promise.all(chunk.map(async (r) => ({ id: r.id, u: r.u, d: r.d ? 1 : 0, c: await encrypt(r.id, r.obj) })));
+      const records = await Promise.all(chunk.map(async (r) => ({ id: r.id, u: r.u, d: r.d ? 1 : 0, k: r.k || 'i', c: await encrypt(r.id, r.obj) })));
       if (sync.ws !== ws || ws.readyState !== 1) { sync.inflight = {}; return; }
       ws.send(JSON.stringify({ t: 'put', records }));
     }
@@ -813,6 +1089,17 @@
       sync.conf.pushed[r.id] = Math.max(sync.conf.pushed[r.id] || 0, r.u);
       let obj;
       try { obj = await decrypt(r.id, r.c); } catch (e) { continue; }
+      if (r.k === 'g') {
+        if (r.id === '_guestcfg') {
+          if (r.u > (state.gcfg.updatedAt || 0)) { state.gcfg = normGcfg({ ...obj, updatedAt: r.u }); changed = true; }
+          continue;
+        }
+        const g = normGuest({ ...obj, id: r.id, updatedAt: r.u, deleted: !!r.d || !!obj.deleted, sample: false });
+        const gi = state.guests.findIndex((x) => x.id === r.id);
+        if (gi < 0) { state.guests.push(g); changed = true; }
+        else if (r.u > (state.guests[gi].updatedAt || 0)) { state.guests[gi] = g; changed = true; }
+        continue;
+      }
       if (r.id === '_settings') {
         if (r.u > (state.settings.updatedAt || 0)) { state.settings = { ...normalize({ settings: obj }).settings, updatedAt: r.u }; changed = true; }
         continue;
@@ -830,7 +1117,7 @@
   }
   function afterRemote(notify) {
     state.meta.lastSync = now();
-    if (live().some((i) => !i.sample)) state.meta.onboarded = true;
+    if (live().some((i) => !i.sample) || liveGuests().some((g) => !g.sample)) state.meta.onboarded = true;
     save();
     render();
     // il dettaglio aperto si aggiorna; un modulo in compilazione resta com'è
@@ -880,7 +1167,7 @@
     ws.onopen = () => {
       sync.retry = 0;
       sync.lastPong = Date.now();
-      ws.send(JSON.stringify({ t: 'hello', since: sync.conf.lastSeq }));
+      ws.send(JSON.stringify({ t: 'hello', since: sync.conf.lastSeq, v: 2 }));
       flush();
       clearInterval(sync.pingTimer);
       sync.pingTimer = setInterval(() => {
@@ -945,6 +1232,7 @@
     saveSync();
     // l'esempio non va mai inviato all'altro telefono
     state.items = state.items.filter((i) => !i.sample);
+    state.guests = state.guests.filter((g) => !g.sample);
     save();
     connect();
   }
@@ -1080,13 +1368,58 @@
       for (const i of state.items) if (!prevIds.has(i.id) && !i.sample) prev.items.push(normItem({ id: i.id, deleted: true, updatedAt: t }));
       if (JSON.stringify(prev.settings) !== JSON.stringify(state.settings)) prev.settings.updatedAt = t;
       if (JSON.stringify(prev.categories) !== JSON.stringify(state.categories)) prev.catU = t;
+      const gcur = new Map(state.guests.map((g) => [g.id, JSON.stringify(g)]));
+      prev.guests.forEach((g) => { if (gcur.get(g.id) !== JSON.stringify(g)) g.updatedAt = Math.max(t, (g.updatedAt || 0) + 1); });
+      const gprevIds = new Set(prev.guests.map((g) => g.id));
+      for (const g of state.guests) if (!gprevIds.has(g.id) && !g.sample) prev.guests.push(normGuest({ id: g.id, deleted: true, updatedAt: t }));
+      if (JSON.stringify(prev.gcfg) !== JSON.stringify(state.gcfg)) prev.gcfg.updatedAt = t;
       state = prev;
       toastEl.hidden = true; toastEl._undo = null;
       save(); render();
       if (sheet.open && sheetRefresh) sheetRefresh();
     },
-    'load-sample': () => { state.items.push(...sampleItems()); state.meta.onboarded = true; commit('Esempio caricato'); },
-    'clear-sample': () => { state.items = state.items.filter((i) => !i.sample); commit('Esempio eliminato'); },
+    'load-sample': () => { state.items.push(...sampleItems()); if (!liveGuests().length) state.guests.push(...sampleGuests()); state.meta.onboarded = true; commit('Esempio caricato'); },
+    'clear-sample': () => { state.items = state.items.filter((i) => !i.sample); state.guests = state.guests.filter((g) => !g.sample); commit('Esempio eliminato'); },
+    'new-guest': () => openGuestForm(null),
+    'guest-bulk': () => openGuestBulk(),
+    'open-guest': (el) => openGuest(el.dataset.id),
+    'edit-guest': (el) => openGuestForm(el.dataset.id),
+    'gfilter': (el) => { ui.gfilter = el.dataset.f; render(); },
+    'del-guest': (el) => {
+      const g = findGuest(el.dataset.id); if (!g) return;
+      const snap = snapshot();
+      const idx = state.guests.indexOf(g);
+      state.guests[idx] = normGuest({ id: g.id, deleted: true, updatedAt: Math.max(now(), (g.updatedAt || 0) + 1) });
+      closeSheet();
+      commit('Nucleo eliminato', snap);
+    },
+    rsvp: (el) => {
+      const g = findGuest(el.dataset.g); if (!g) return;
+      const m = g.members.find((x) => x.id === el.dataset.m); if (!m) return;
+      m.rsvp = el.dataset.v; touch(g); commit();
+    },
+    'rsvp-all': (el) => {
+      const g = findGuest(el.dataset.g); if (!g) return;
+      g.members.forEach((m) => { m.rsvp = el.dataset.v; }); touch(g); commit();
+    },
+    deliver: (el) => {
+      const g = findGuest(el.dataset.g); if (!g) return;
+      const snap = snapshot();
+      g.invite = { delivered: true, date: todayISO(), how: el.dataset.how || '' }; touch(g);
+      commit('Partecipazione consegnata', snap);
+    },
+    undeliver: (el) => {
+      const g = findGuest(el.dataset.g); if (!g) return;
+      g.invite = { delivered: false, date: '', how: '' }; touch(g); commit();
+    },
+    gfavors: (el) => {
+      const g = findGuest(el.dataset.g); if (!g) return;
+      g.favors = Math.max(0, Math.min(99, g.favors + Number(el.dataset.d))); touch(g); commit();
+    },
+    gspare: (el) => { state.gcfg.spare = Math.max(0, Math.min(999, (state.gcfg.spare || 0) + Number(el.dataset.d))); touchGcfg(); commit(); },
+    'add-member-row': () => { const box = $('#m-rows'); if (!box) return; box.insertAdjacentHTML('beforeend', memberRow()); const ins = box.querySelectorAll('input[name="m_name"]'); ins[ins.length - 1].focus(); },
+    'remove-member-row': (el) => { const box = $('#m-rows'); const row = el.closest('.m-row'); if (!box || !row) return; if (box.children.length > 1) row.remove(); else row.querySelector('input[name="m_name"]').value = ''; },
+    'export-guests-csv': async () => { await shareOrDownload(`invitati-matrimonio-${todayISO()}.csv`, csvGuests(), 'text/csv'); },
     backup: async () => {
       const name = `spese-matrimonio-${todayISO()}.json`;
       const ok = await shareOrDownload(name, JSON.stringify(payload(), null, 1), 'application/json');
@@ -1179,6 +1512,7 @@
   });
   document.addEventListener('input', (e) => {
     if (e.target.id === 'q') { ui.q = e.target.value; const l = $('#items-list'); if (l) l.innerHTML = itemsList(); }
+    if (e.target.id === 'gq') { ui.gq = e.target.value; const l = $('#guests-list'); if (l) l.innerHTML = guestsList(); }
     if (e.target.getAttribute('aria-invalid') === 'true') {
       e.target.removeAttribute('aria-invalid');
       const er = e.target.closest('.field')?.querySelector('.err'); if (er) er.remove();
@@ -1289,6 +1623,48 @@
       render();
       toast('Telefono collegato');
     },
+    guest(f) {
+      const el = f.elements;
+      const names = [...f.querySelectorAll('input[name="m_name"]')];
+      const members = names.map((inp) => {
+        const row = inp.closest('.m-row');
+        return normMember({ id: row.querySelector('input[name="m_id"]').value || uid(), name: inp.value, kind: row.querySelector('select[name="m_kind"]').value, rsvp: row.querySelector('input[name="m_rsvp"]').value });
+      }).filter((m) => m.name);
+      let name = el.name.value.trim();
+      if (!members.length && name) members.push(normMember({ name, kind: 'adulto' }));
+      if (!members.length) return fieldError(names[0] || el.name, 'Scrivete almeno un nome.');
+      if (!name) name = members.map((m) => m.name).join(' e ');
+      const favors = el.favors.value.trim() === '' ? 1 : Number(el.favors.value.replace(/\D/g, ''));
+      const side = el.side.value;
+      ui.gside = side;
+      const id = f.dataset.id;
+      let g = id ? findGuest(id) : null;
+      if (g) Object.assign(g, { name, side, members, favors: Math.min(99, favors || 0), notes: el.notes.value.trim() });
+      else { g = normGuest({ name, side, members, favors, notes: el.notes.value.trim() }); state.guests.push(g); }
+      touch(g);
+      state.meta.onboarded = true;
+      save(); render(); openGuest(g.id);
+      toast(id ? 'Modifiche salvate' : 'Nucleo aggiunto');
+    },
+    guestBulk(f) {
+      const ta = f.elements.list;
+      const rows = parseGuestLines(ta.value);
+      if (!rows.length) return fieldError(ta, 'Scrivete almeno un nome.');
+      const side = f.elements.side.value;
+      ui.gside = side;
+      const snap = snapshot();
+      for (const r of rows) { const g = normGuest({ name: r.name, side, members: r.members, favors: 1 }); touch(g); state.guests.push(g); }
+      state.meta.onboarded = true;
+      closeSheet();
+      if (ui.tab !== 'guests') go('guests');
+      const people = rows.reduce((a, r) => a + r.members.length, 0);
+      commit(`Aggiunti ${plural(rows.length, 'nucleo', 'nuclei')} (${plural(people, 'persona', 'persone')})`, snap);
+    },
+    gcfg(f) {
+      const v = f.elements.ordered.value.replace(/\D/g, '');
+      state.gcfg.ordered = Math.min(9999, Number(v || 0)); touchGcfg();
+      commit('Salvato');
+    },
     onboarding(f) {
       const el = f.elements;
       const budget = parseAmount(el.budget.value);
@@ -1367,5 +1743,5 @@
   }
 
   // per i test
-  window.__speseNozze = { parseAmount, itemStats, totals: () => { const t = totals(); return { ...t, byCat: Object.fromEntries(t.byCat), byPayer: Object.fromEntries(t.byPayer) }; }, mergeIncoming, getState: () => state, sync: () => ({ status: sync.status, conf: sync.conf, pending: pending().length }) };
+  window.__speseNozze = { parseAmount, itemStats, totals: () => { const t = totals(); return { ...t, byCat: Object.fromEntries(t.byCat), byPayer: Object.fromEntries(t.byPayer) }; }, mergeIncoming, guestStats, parseGuestLines, getState: () => state, sync: () => ({ status: sync.status, conf: sync.conf, pending: pending().length }) };
 })();

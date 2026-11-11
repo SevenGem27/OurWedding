@@ -7,6 +7,8 @@
  *   dati cifrati: vede id, data di modifica e un blob illeggibile.
  * - Regola di unione: per ogni record vince la modifica più recente (u).
  * - WebSocket con Hibernation API: a riposo non consuma tempo di calcolo.
+ * - Ogni record ha un tipo k: 'i' (spese e impostazioni) o 'g' (invitati).
+ *   I client della versione 1 non conoscono gli invitati: ricevono solo i record 'i'.
  */
 import { DurableObject } from 'cloudflare:workers';
 
@@ -45,6 +47,8 @@ export class Room extends DurableObject {
       c   TEXT NOT NULL
     )`);
     this.sql.exec('CREATE INDEX IF NOT EXISTS records_seq ON records(seq)');
+    // migrazione: tipo del record (stanze create prima degli invitati)
+    try { this.sql.exec("ALTER TABLE records ADD COLUMN k TEXT NOT NULL DEFAULT 'i'"); } catch (e) { /* colonna già presente */ }
     this.sql.exec('CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v INTEGER NOT NULL)');
     // il "ping" del client riceve "pong" senza svegliare l'oggetto
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair('ping', 'pong'));
@@ -62,8 +66,14 @@ export class Room extends DurableObject {
     return new Response(null, { status: 101, webSocket: client });
   }
 
-  since(seq) {
-    return this.sql.exec('SELECT id, u, d, c, seq FROM records WHERE seq > ? ORDER BY seq LIMIT 5000', seq).toArray();
+  since(seq, v) {
+    return v >= 2
+      ? this.sql.exec('SELECT id, u, d, c, seq, k FROM records WHERE seq > ? ORDER BY seq LIMIT 5000', seq).toArray()
+      : this.sql.exec("SELECT id, u, d, c, seq FROM records WHERE seq > ? AND k = 'i' ORDER BY seq LIMIT 5000", seq).toArray();
+  }
+
+  clientVersion(ws) {
+    try { const a = ws.deserializeAttachment(); return a && a.v ? a.v : 1; } catch (e) { return 1; }
   }
 
   apply(records) {
@@ -84,12 +94,13 @@ export class Room extends DurableObject {
       if (!cur || r.u > cur.u) {
         seq++;
         const d = r.d ? 1 : 0;
+        const k = r.k === 'g' ? 'g' : 'i';
         this.sql.exec(
-          `INSERT INTO records (id, u, seq, d, c) VALUES (?, ?, ?, ?, ?)
-           ON CONFLICT(id) DO UPDATE SET u = excluded.u, seq = excluded.seq, d = excluded.d, c = excluded.c`,
-          r.id, r.u, seq, d, r.c
+          `INSERT INTO records (id, u, seq, d, c, k) VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(id) DO UPDATE SET u = excluded.u, seq = excluded.seq, d = excluded.d, c = excluded.c, k = excluded.k`,
+          r.id, r.u, seq, d, r.c, k
         );
-        accepted.push({ id: r.id, u: r.u, d, c: r.c, seq });
+        accepted.push({ id: r.id, u: r.u, d, c: r.c, seq, k });
       }
       // il server ha questa versione o una più recente: il client può considerarla inviata
       ack.push({ id: r.id, u: r.u });
@@ -111,11 +122,13 @@ export class Room extends DurableObject {
     if (!m || typeof m !== 'object') return;
 
     if (m.t === 'hello') {
+      const v = Number.isSafeInteger(m.v) && m.v > 0 ? m.v : 1;
+      try { ws.serializeAttachment({ v }); } catch (e) { /* niente */ }
       const since = Number.isSafeInteger(m.since) && m.since >= 0 ? m.since : 0;
       // se il client è "avanti" (stanza ricreata), riparte da zero
       const seq = this.currentSeq();
       const from = since > seq ? 0 : since;
-      this.send(ws, { t: 'sync', records: this.since(from), seq, reset: from !== since });
+      this.send(ws, { t: 'sync', records: this.since(from, v), seq, reset: from !== since });
       return;
     }
 
@@ -123,9 +136,13 @@ export class Room extends DurableObject {
       const { accepted, ack, seq } = this.apply(m.records);
       this.send(ws, { t: 'ack', ack, seq });
       if (accepted.length) {
-        const out = JSON.stringify({ t: 'changes', records: accepted, seq });
+        const all = JSON.stringify({ t: 'changes', records: accepted, seq });
+        const onlyI = accepted.filter((r) => r.k === 'i');
+        const old = onlyI.length ? JSON.stringify({ t: 'changes', records: onlyI, seq }) : null;
         for (const other of this.ctx.getWebSockets()) {
-          if (other !== ws) { try { other.send(out); } catch (e) { /* ignora */ } }
+          if (other === ws) continue;
+          const out = this.clientVersion(other) >= 2 ? all : old;
+          if (out) { try { other.send(out); } catch (e) { /* ignora */ } }
         }
       }
     }

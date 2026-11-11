@@ -44,6 +44,16 @@
           "sizes": "192x192"
         }
       ]
+    },
+    {
+      "name": "Invitati",
+      "url": "./?tab=guests",
+      "icons": [
+        {
+          "src": "icons/icon-192.png",
+          "sizes": "192x192"
+        }
+      ]
     }
   ]
 }
