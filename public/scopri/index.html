@@ -49,6 +49,7 @@
     .wrap { max-width: 68rem; margin: 0 auto; padding: 0 1.25rem; }
     h1, h2, h3 { font-family: var(--serif); font-weight: 600; margin: 0; letter-spacing: -.01em; }
     p { margin: 0; }
+    :where(main) p { text-align: justify; -webkit-hyphens: auto; hyphens: auto; hyphenate-limit-chars: 7 3 3; }
 
     .top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: calc(env(safe-area-inset-top, 0px) + 1rem) 0 0; }
     .brand { display: flex; align-items: center; gap: .6rem; text-decoration: none; color: var(--ink); font-weight: 700; }

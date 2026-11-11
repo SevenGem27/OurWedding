@@ -10,7 +10,7 @@
   const KEY = 'spese-nozze:v1';
   const SYNC_KEY = 'spese-nozze:sync';
   const APP_ID = 'spese-nozze';
-  const VERSION = '1.3.0';
+  const VERSION = '1.3.1';
 
   const DEFAULT_CATEGORIES = [
     'Location e ricevimento', 'Catering', 'Chiesa o Comune', 'Abito sposa', 'Abito sposo',

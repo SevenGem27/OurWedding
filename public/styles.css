@@ -126,6 +126,14 @@ main {
 }
 h1, h2, h3 { margin: 0; font-weight: 500; }
 p { margin: 0; }
+/* testo giustificato con sillabazione italiana; :where non aggiunge specificità,
+   così le classi che centrano o allineano diversamente (codice di coppia, righe) restano valide */
+:where(main, .sheet-body) :where(p, .detail-notes, .field .hint) {
+  text-align: justify;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+  hyphenate-limit-chars: 7 3 3;
+}
 
 /* ---------- Intestazioni ---------- */
 .home-head { padding: 0 .25rem; }
