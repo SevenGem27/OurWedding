@@ -10,7 +10,7 @@
   const KEY = 'spese-nozze:v1';
   const SYNC_KEY = 'spese-nozze:sync';
   const APP_ID = 'spese-nozze';
-  const VERSION = '1.3.1';
+  const VERSION = '1.3.2';
 
   const DEFAULT_CATEGORIES = [
     'Location e ricevimento', 'Catering', 'Chiesa o Comune', 'Abito sposa', 'Abito sposo',
@@ -1009,12 +1009,19 @@
   const normCode = (s) => String(s || '').toUpperCase().replace(/[^0-9A-Z]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
   const fmtCode = (c) => (c.match(/.{1,5}/g) || []).join('-');
 
+  // Versione del protocollo di sincronizzazione. Un telefono che passa dalla 1 (senza invitati)
+  // alla 2 riparte da zero: con la versione 1 ha già "superato" i record degli invitati
+  // senza riceverli, e altrimenti non li chiederebbe più.
+  const SYNC_PROTO = 2;
   function loadSync() {
     try {
       const s = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null');
-      if (s && CODE_RE.test(s.code || '')) return { code: s.code, lastSeq: Math.max(0, toInt(s.lastSeq)), pushed: s.pushed && typeof s.pushed === 'object' ? s.pushed : {} };
+      if (s && CODE_RE.test(s.code || '')) {
+        const upToDate = toInt(s.proto) >= SYNC_PROTO;
+        return { code: s.code, lastSeq: upToDate ? Math.max(0, toInt(s.lastSeq)) : 0, pushed: s.pushed && typeof s.pushed === 'object' ? s.pushed : {}, proto: SYNC_PROTO };
+      }
     } catch (e) { /* niente */ }
-    return { code: '', lastSeq: 0, pushed: {} };
+    return { code: '', lastSeq: 0, pushed: {}, proto: SYNC_PROTO };
   }
   const sync = {
     conf: loadSync(), status: 'off', ws: null, key: null, room: '', retry: 0,
@@ -1226,7 +1233,7 @@
   function pairWith(code) {
     dropConnection();
     clearTimeout(sync.retryTimer);
-    sync.conf = { code, lastSeq: 0, pushed: {} };
+    sync.conf = { code, lastSeq: 0, pushed: {}, proto: SYNC_PROTO };
     sync.key = null;
     sync.retry = 0;
     saveSync();
@@ -1239,7 +1246,7 @@
   function unpair() {
     dropConnection();
     clearTimeout(sync.retryTimer);
-    sync.conf = { code: '', lastSeq: 0, pushed: {} };
+    sync.conf = { code: '', lastSeq: 0, pushed: {}, proto: SYNC_PROTO };
     sync.key = null;
     saveSync();
     setSyncStatus('off');
